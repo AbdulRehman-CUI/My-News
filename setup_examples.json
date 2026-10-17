@@ -1,0 +1,14 @@
+[
+  {"id":"setup-tech","topic":"Technology","subtopic":"AI","title":"A small research team explores more efficient AI tools"},
+  {"id":"setup-science","topic":"Science","subtopic":"Space","title":"An imagined mission maps the ice beneath a distant moon"},
+  {"id":"setup-business","topic":"Business","subtopic":"Startups","title":"A neighborhood startup tests a repair-first business model"},
+  {"id":"setup-sports","topic":"Sports","subtopic":"Cricket","title":"A fictional cricket club tries a new approach to youth training"},
+  {"id":"setup-entertainment","topic":"Entertainment","subtopic":"Film","title":"An independent film festival brings first-time directors together"},
+  {"id":"setup-politics","topic":"Politics","subtopic":"Public policy","title":"An imagined city debates how to improve public transport"},
+  {"id":"setup-health","topic":"Health","subtopic":"Public health","title":"A fictional community pilots a neighborhood health program"},
+  {"id":"setup-education","topic":"Education","subtopic":"Learning","title":"A classroom experiments with learning through hands-on projects"},
+  {"id":"setup-environment","topic":"Environment","subtopic":"Clean energy","title":"An imagined town explores a community-owned solar project"},
+  {"id":"setup-culture","topic":"Culture","subtopic":"Heritage","title":"A fictional archive brings forgotten local stories back to life"},
+  {"id":"setup-travel","topic":"Travel","subtopic":"Rail travel","title":"An imagined rail route connects small towns and local markets"},
+  {"id":"setup-gaming","topic":"Gaming","subtopic":"Indie games","title":"A small game studio experiments with stories shaped by players"}
+]

@@ -1,0 +1,24 @@
+{% extends 'base.html' %}
+{% block title %}Your reading space{% endblock %}
+{% block content %}
+<div class="page-intro"><p class="eyebrow">WELCOME TO MYNEWS</p><h1>Good mornings start<br>with a little curiosity.</h1><p class="lede">A personal newspaper shaped around what matters to you.<br>Choose your reading space, and let’s get acquainted.</p></div>
+<div class="profile-grid">
+  <section class="panel new-profile"><span class="section-number">01 / A FRESH START</span><h2>Make yourself at home.</h2><p>A few choices will help us understand your interests. You can pause and come back at any point.</p>
+    {% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
+    <form method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label class="field-label" for="display-name">Display name <span class="quiet">(optional)</span></label>
+      <input id="display-name" name="display_name" maxlength="60" placeholder="What should we call you?" autocomplete="nickname" value="{{ request.form.get('display_name', '') }}" aria-describedby="name-help">
+      <p class="field-help" id="name-help">Leave blank and we’ll give your profile a name.</p>
+      <button class="button primary" type="submit">Create a reading profile <span aria-hidden="true">↗</span></button>
+    </form>
+  </section>
+  <section class="panel"><span class="section-number">02 / PICK UP WHERE YOU LEFT OFF</span><h2>Your local profiles</h2>
+    {% if readers %}<ul class="profile-list">{% for profile in readers %}<li><form method="post" action="{{ url_for('select_profile') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="profile_id" value="{{ profile.id }}">
+      <button class="profile-option" type="submit"><span class="avatar" aria-hidden="true">{{ profile.display_name[0]|upper }}</span><span><strong>{{ profile.display_name }}</strong><small>{{ 'Setup complete' if profile.onboarding_complete else 'Continue setup · step ' ~ (profile.current_step + 1) ~ ' of 8' }}</small></span><span aria-hidden="true">→</span></button>
+    </form></li>{% endfor %}</ul>{% else %}<div class="profile-empty"><span class="empty-symbol" aria-hidden="true">▤</span><p>No profiles here yet.</p><p class="quiet">Your reading space starts with the form beside you.</p></div>{% endif %}
+  </section>
+</div>
+<p class="local-notice">Local prototype identity: anyone using this app on this computer can select any profile. This is not a private login.</p>
+{% endblock %}

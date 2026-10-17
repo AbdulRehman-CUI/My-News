@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#254d3f">
+  <title>{% block title %}MyNews{% endblock %} · A morning of your own</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <script src="{{ url_for('static', filename='onboarding.js') }}" defer></script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<aside class="sidebar">
+  <a class="brand" href="{{ url_for('paper') }}" aria-label="MyNews home"><span class="brand-mark" aria-hidden="true">m<span>n</span></span>MyNews<span class="brand-dot">.</span></a>
+  <p class="sidebar-caption">A little perspective.<br>A morning of your own.</p>
+  <nav aria-label="Main navigation">
+    {% for endpoint, label, icon in [('paper', 'Today’s Paper', '▤'), ('discover', 'Discover', '◈'), ('library', 'My Library', '▥'), ('editor', 'My Editor', '✳')] %}
+    <a href="{{ url_for(endpoint) }}" {% if request.endpoint == endpoint %}aria-current="page"{% endif %}><span class="nav-icon" aria-hidden="true">{{ icon }}</span>{{ label }}</a>
+    {% endfor %}
+  </nav>
+  <div class="sidebar-bottom">
+    <span class="local-badge"><span aria-hidden="true">●</span> Local edition</span>
+    <a class="profile-link" href="{{ url_for('profiles') }}" {% if request.endpoint == 'profiles' %}aria-current="page"{% endif %}>
+      <span class="avatar" aria-hidden="true">{{ reader.display_name[0]|upper if reader else 'R' }}</span>
+      <span><strong>{{ reader.display_name if reader else 'Your reading space' }}</strong><small>{{ 'Switch or create a profile' if reader else 'Choose a local profile' }}</small></span>
+      <span aria-hidden="true">↗</span>
+    </a>
+    <p class="privacy-note">Stored on this computer.<br>No account or subscription needed.</p>
+  </div>
+</aside>
+<div class="workspace">
+  <header class="topbar"><span>YOUR DAILY PERSPECTIVE</span><span class="quiet">{{ 'Let’s make this yours' if request.endpoint == 'onboarding' else 'Made for a more thoughtful morning' }}</span></header>
+  <main id="main" tabindex="-1">{% block content %}{% endblock %}</main>
+  <footer class="page-footer"><span>MyNews · A personal paper, taking shape.</span><span>Phase 1 / The foundation</span></footer>
+</div>
+</body>
+</html>

@@ -1,0 +1,48 @@
+{% extends 'base.html' %}
+{% block title %}{{ steps[step][1] }}{% endblock %}
+{% macro options(name, choices, multiple=true) %}
+{% set selected = submitted.getlist(name) if submitted else (prefs.get(name, []) if multiple else [prefs.get(name)]) %}
+<div class="choices">
+{% for choice in choices %}
+  <label class="choice"><input type="{{ 'checkbox' if multiple else 'radio' }}" name="{{ name }}" value="{{ choice }}" {% if choice in selected %}checked{% endif %}><span>{{ choice }}</span><span class="choice-indicator" aria-hidden="true">{{ '+' if multiple else '○' }}</span></label>
+{% endfor %}
+</div>
+{% endmacro %}
+{% block content %}
+<div class="setup-heading"><a class="text-link" href="{{ url_for('profiles') }}">← Your profiles</a><span class="saved-label">Progress saved on this computer</span></div>
+<div class="setup-grid">
+  <aside class="setup-aside"><p class="eyebrow">A PAPER THAT KNOWS YOUR WORLD</p><h1>A few choices.<br>A better morning.</h1><p>Start with what interests you.<br>Leave room for something new.</p><ol class="step-list" aria-label="Setup stages">{% for item in steps %}<li {% if loop.index0 == step %}aria-current="step"{% endif %}><span class="step-circle" aria-hidden="true">{{ '✓' if loop.index0 < step else loop.index }}</span>{{ ['About you', 'Education', 'Your day-to-day', 'Your interests', 'A closer look', 'Your world', 'A quick calibration', 'Your morning'][loop.index0] }}</li>{% endfor %}</ol><p class="aside-note">Your age and education won’t be used to guess your interests or expertise.</p></aside>
+  <section class="panel wizard-panel" aria-labelledby="step-title">
+    <div class="progress-meta"><span>GETTING TO KNOW YOU</span><span>STEP {{ step + 1 }} OF 8</span></div>
+    <progress value="{{ step + 1 }}" max="8" aria-label="Onboarding progress">{{ step + 1 }} of 8</progress>
+    <h2 id="step-title">{{ steps[step][1] }}</h2><p class="step-description">{{ steps[step][2] }}</p>
+    {% if error %}<div class="error" role="alert" id="validation-error" tabindex="-1">{{ error }}</div>{% endif %}
+    <form method="post" id="onboarding-form" data-step="{{ step }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <fieldset><legend class="selection-hint">{{ 'Choose one · optional' if step in [0, 1] else ('Confirm both settings · required' if step == 7 else 'Choose any that fit · optional') }}</legend>
+      {% if key == 'age' %}{{ options('age', ages, false) }}
+      {% elif key == 'education' %}{{ options('education', education, false) }}
+      {% elif key == 'activities' %}{{ options('activities', activities) }}
+      {% elif key == 'interests' %}{{ options('interests', topics.keys()) }}<p class="field-help">Nothing in particular? Skip to start with general interests.</p>
+      {% elif key == 'subtopics' %}
+        {% for topic in prefs.get('interests', []) %}<fieldset class="subtopic-group"><legend>{{ topic }}</legend><div class="choices compact">{% for sub in topics[topic] %}{% set value = topic ~ ':' ~ sub %}<label class="choice"><input type="checkbox" name="subtopics" value="{{ value }}" {% if value in prefs.get('subtopics', []) %}checked{% endif %}><span>{{ sub }}</span><span class="choice-indicator" aria-hidden="true">+</span></label>{% endfor %}</div></fieldset>{% else %}<div class="inline-note"><strong>A little of everything.</strong><p>You’re starting with general interests. Choose broad interests on the previous step to explore subtopics, or continue.</p></div>{% endfor %}
+      {% elif key == 'regions' %}{{ options('regions', regions) }}<p class="field-help">Choose Worldwide on its own, or select specific places. Skipping saves Worldwide.</p>
+      {% elif key == 'calibration' %}
+        <div class="example-notice"><strong>FICTIONAL SETUP EXAMPLES</strong><p>These headlines describe imagined scenarios. They are preference choices, not news, and will never appear as reporting in your paper.</p></div>
+        <div class="headline-choices">{% for example in examples %}<label class="headline-choice"><input type="checkbox" name="calibration" value="{{ example.id }}" {% if example.id in prefs.get('calibration', []) %}checked{% endif %}><span><small>{{ example.topic }} / {{ example.subtopic }}</small><strong>{{ example.title }}</strong><span class="example-label">Fictional example</span></span></label>{% endfor %}</div>
+      {% elif key == 'morning' %}
+        <label class="field-label" for="timezone">Your timezone</label>
+        <select id="timezone" name="timezone" data-saved="{{ 'yes' if prefs.get('timezone') or submitted else 'no' }}" required aria-describedby="timezone-help">{% for timezone in timezones %}<option value="{{ timezone }}" {% if timezone == (submitted.get('timezone') if submitted else prefs.get('timezone', 'UTC')) %}selected{% endif %}>{{ timezone|replace('_', ' ') }}</option>{% endfor %}</select>
+        <p class="field-help" id="timezone-help">Your browser’s timezone is suggested when available. Confirm it or choose another.</p>
+        <label class="field-label" for="morning-time">Morning-ready time</label>
+        <input type="time" id="morning-time" name="morning_time" value="{{ submitted.get('morning_time', '') if submitted else prefs.get('morning_time', '07:00') }}" required aria-describedby="time-help">
+        <p class="field-help" id="time-help">Local time in your selected timezone. The time is a preference; scheduling is not active yet.</p>
+        <label class="confirm-choice"><input type="checkbox" name="confirmed" value="yes" required><span>I confirm this timezone and ready time.</span></label>
+      {% endif %}
+      </fieldset>
+      <p class="draft-status" id="draft-status" role="status" aria-live="polite">{% if step < 7 %}Choices save as you go. Back and Next also save.{% else %}Settings save as drafts. Confirm them to finish setup.{% endif %}</p>
+      <div class="wizard-actions"><button type="submit" name="intent" value="back" class="button secondary" formnovalidate {% if step == 0 %}disabled{% endif %}>← Back</button><div>{% if step < 7 %}<button type="submit" name="intent" value="skip" class="button skip" formnovalidate>{{ 'Skip' if step != 1 else 'Prefer to skip' }}</button>{% endif %}<button type="submit" name="intent" value="next" class="button primary">{{ 'Finish setup' if step == 7 else 'Next' }} <span aria-hidden="true">→</span></button></div></div>
+    </form>
+  </section>
+</div>
+{% endblock %}

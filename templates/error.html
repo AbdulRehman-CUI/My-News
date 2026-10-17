@@ -1,0 +1,3 @@
+{% extends 'base.html' %}
+{% block title %}Let’s try that again{% endblock %}
+{% block content %}<section class="panel error-page"><p class="eyebrow">REQUEST {{ error.code }}</p><h1>Let’s try that again.</h1><p>{{ error.description }}</p><a class="button primary" href="{{ url_for('profiles') }}">Return to your profiles →</a></section>{% endblock %}
