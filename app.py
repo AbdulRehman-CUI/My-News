@@ -3,7 +3,7 @@ import json
 import os
 import re
 import secrets
-from datetime import timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError, available_timezones
 
@@ -128,6 +128,41 @@ def create_app(test_config=None):
     with app.app_context():
         init_db()
 
+    @app.template_filter("reader_date")
+    def reader_date(value, timezone_name="UTC", date_only=False):
+        """Screen-only formatting; leave stored snapshots and PDF output intact."""
+        if not value:
+            return "Date unknown"
+        try:
+            if len(str(value)) == 10:
+                parsed = date.fromisoformat(value)
+                return f"{parsed.strftime('%A')}, {parsed.day} {parsed.strftime('%B %Y')}"
+            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            try:
+                zone = ZoneInfo(timezone_name or "UTC")
+            except (ZoneInfoNotFoundError, ValueError):
+                zone = ZoneInfo("UTC")
+            local = parsed.astimezone(zone)
+            day = f"{local.day} {local.strftime('%b %Y')}"
+            return day if date_only else f"{day}, {local:%H:%M} {local:%Z}"
+        except (ValueError, TypeError):
+            return "Date unavailable"
+
+    @app.context_processor
+    def screen_date():
+        prefs = preferences(g.reader["id"]) if g.get("reader") else {}
+        try:
+            zone = ZoneInfo(prefs.get("timezone") or "UTC")
+        except (ZoneInfoNotFoundError, ValueError):
+            zone = ZoneInfo("UTC")
+        return {"reader_today": datetime.now(zone).date().isoformat()}
+
+    @app.template_filter("topic_names")
+    def topic_names(value):
+        return [item["topic"] for item in json.loads(value or "[]") if item.get("topic")]
+
     @app.before_request
     def prepare_request():
         session.setdefault("csrf", secrets.token_urlsafe(32))
@@ -139,7 +174,7 @@ def create_app(test_config=None):
 
     @app.after_request
     def secure_response(response):
-        response.headers["Content-Security-Policy"] = "default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+        response.headers["Content-Security-Policy"] = "default-src 'self'; img-src 'self' https:; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "same-origin"

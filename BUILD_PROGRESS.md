@@ -239,3 +239,135 @@ Not run:
 - No browser visual inspection of every PDF page or mobile viewport was performed
   in this terminal-only validation run.
 - No real model download or live API smoke request was repeated during Phase 6.
+
+## Frontend redesign — vibrant editorial interface
+
+Implemented the requested screen redesign using Flask/Jinja, system fonts, local
+CSS, and a small image-failure script. No framework, icon package, CDN, external
+design service, browser tool, renderer, screenshot, or subagent was used for this
+work. Visual verification is explicitly **not performed**; the reader will check it
+manually.
+
+Changes:
+
+- Replaced the previous stylesheet with one coordinated palette: warm ivory
+  `#FFF8F0`, white, navy `#14213D`, cobalt `#3454D1`, coral `#FF6B4A`, peach
+  `#FFE4D6`, lavender `#EEEAFE`, slate `#526078`, and warm-gray borders `#E5E1DC`.
+  Added shared spacing, corner radii, restrained shadows, focus/hover states,
+  native-control styling, and reduced-motion rules.
+- Compact header with a MyNews wordmark, consistent local SVG icons, active
+  navigation, and grouped profile control. At tablet/mobile widths the navigation
+  becomes a second header row in normal document flow, covering no article actions.
+- Compact greeting/date, wrapping topic links, prominent PDF download, readable
+  Prepared at / News updated through values, and a concise shorter-edition notice.
+  The lead headline is placed immediately after these compact controls, followed
+  by supporting stories and section headings. First-viewport placement is a design
+  intention supported by code inspection, **not a measured visual result**.
+- Lead and supporting stories render once, in saved order, with their original
+  titles, briefs, details, sources, reasons, and takeaways. One/two-story editions
+  have explicit small-edition styling; no content is duplicated to fill a grid.
+  Missing images produce text-first cards rather than oversized fake news banners.
+- Real supplied images have defined aspect ratios, lazy loading for supporting
+  images, eager loading for the lead, empty decorative alt text, and a compact
+  failure caption. HTTPS publisher images are permitted by the screen CSP; scripts,
+  forms, and other resources retain their existing restrictions. No image is fetched
+  by a test or terminal verification command.
+- Discover uses a responsive story grid with actual article-topic labels. Library
+  uses dated archive cards with original read/download URLs and a saved-stories
+  grid. Editor separates explicit interests, learned evidence, exclusions, and
+  confirmed morning settings. Onboarding shares the new choices/progress styling;
+  IDs, submitted fields, and autosave handlers remain intact.
+- Screen dates are formatted from stored values in the selected reader's saved
+  timezone, including date rollovers. Policy identifiers remain internal rather
+  than appearing in edition metadata. A date-only edition remains its saved local
+  calendar date. Unknown publication dates remain labeled unknown.
+- No change to ingestion, recommendations, schema, worker, generation services,
+  or edition snapshots. `templates/newspaper.html` and `pdf_export.py` are unchanged;
+  neither loads the screen CSS/JavaScript.
+
+Files changed: `app.py`, `static/style.css`, `static/screen.js`,
+`templates/base.html`, `templates/shell.html`, `templates/_components.html`,
+`templates/onboarding.html`, `tests/test_screen.py`, and this progress log.
+`static/onboarding.js` is unchanged. The unrelated untracked
+`MyNews_Architecture.png` was left untouched.
+
+### Verification results
+
+- **Passed:** 30 unittest checks (the existing regression suite plus four new
+  screen-contract tests) on temporary databases. The PDF exporter was stubbed for
+  route tests, so no Playwright/Chromium/browser process was invoked. This checks
+  download routing, ownership responses, and content type, **not actual PDF bytes
+  or rendering**.
+- **Passed:** Flask test-client rendering of Paper, Discover, Library, Editor,
+  profiles, real calibration, interest selection, and morning setup. Checks cover
+  single/two/three-story rendering, long stored headlines, missing-image markup,
+  original editorial order/content, CSRF/action/field contracts, timezone values,
+  topic anchors, archive URLs, feedback events, saved state, and reading progress.
+- **Passed:** existing snapshot order test renders the traditional newspaper
+  template as an HTML string only. Screen and print template dependencies remain
+  separate.
+- **Passed:** Node syntax checks for both frontend scripts and Node DOM-stub
+  checks for images that failed before script load, loaded successfully, or failed
+  later. These are JavaScript unit checks, **not browser automation**.
+- **Passed:** calculated text contrast for used palette pairs: white/cobalt
+  6.30:1, navy/ivory 15.17:1, navy/peach 13.17:1, navy/coral 5.67:1,
+  navy/lavender 13.57:1, slate/white 6.36:1, slate/lavender 5.40:1,
+  cobalt/white 6.30:1, cobalt/peach 5.19:1. All exceed 4.5:1. Input/choice
+  boundaries were darkened to `#8490A3` for non-text contrast against white.
+- **Passed:** template/JavaScript references and responsive rules inspected in
+  code for approximately 375px, 768px, and 1440px. Flexible widths, `minmax(0,1fr)`,
+  wrapping actions, long-text wrapping, and single-column narrow layouts are
+  present; there are no fixed navigation overlays or fixed story widths. This is
+  a code check, **not proof of actual rendered fit**.
+- **Passed:** `git diff --check`. No files staged, committed, or pushed.
+- **Not run:** visual inspection, screenshots, actual image-network loading,
+  physical/mobile-device interaction, or PDF browser rendering, per the brief.
+
+Reproduce the browser-free unittest run in PowerShell:
+
+```powershell
+$env:TEMP = Join-Path (Get-Location) '.tmp'
+$env:TMP = $env:TEMP
+@'
+import unittest
+from unittest.mock import patch
+suite = unittest.defaultTestLoader.discover('tests')
+with patch('app.export_pdf', return_value=(b'%PDF-offline-route-test', False)):
+    result = unittest.TextTestRunner(verbosity=1).run(suite)
+raise SystemExit(not result.wasSuccessful())
+'@ | .\.venv\Scripts\python.exe -
+```
+
+Do not run the unmodified full test command under the redesign's no-browser
+restriction: one pre-existing PDF integration test invokes the actual renderer.
+
+### Manual visual checklist
+
+Restart Flask to load the new date filters and CSP. Then check at 375px, 768px,
+and 1440px:
+
+1. Lead story appears promptly on desktop; PDF/topic controls are easy to find.
+2. Long headlines, one/two-story editions, missing/broken images, and expanded
+   details fit without clipping or horizontal overflow.
+3. Mobile navigation, profile switching, feedback, save/unsave, read/unread,
+   archive/search/download, and editor controls remain comfortable to use.
+4. Onboarding selections, Back/Next/Skip, refresh persistence, keyboard focus,
+   validation, and morning confirmation remain clear.
+5. Compare a saved edition's story order/content with its PDF; verify print output
+   retains its separate traditional styling.
+
+### Unrelated existing issues discovered (not changed)
+
+- Visibility uses an explicit Mark seen POST. The repository has no automatic
+  viewport/active-reading/source-open JavaScript instrumentation to preserve.
+  The redesign retains the existing controls and events rather than claiming it
+  implemented those missing behaviors.
+- A temporary-database probe confirmed `/paper/save` accepts another reader's
+  edition ID and stores that foreign association for the selected reader (302).
+  `editions.set_saved()` does not check edition ownership. This is a pre-existing
+  reader-isolation gap, independent of the visual changes; it needs a focused
+  backend ownership fix and regression test. No production/runtime data was used
+  or changed by the probe.
+
+Inspect the changes, then commit and push to GitHub yourself. Suggested message:
+`feat: redesign MyNews with a vibrant editorial interface`.

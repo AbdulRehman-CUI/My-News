@@ -1,0 +1,17 @@
+{% macro icon(name) -%}
+<svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+{% if name == 'paper' %}<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 7h8M8 11h8M8 15h3M8 18h3M15 15h1v3h-1z"/>
+{% elif name == 'discover' %}<circle cx="12" cy="12" r="9"/><path d="m16 8-2.5 5.5L8 16l2.5-5.5z"/>
+{% elif name == 'library' %}<path d="M4 5h4v15H4zM10 5h4v15h-4zM16 6l3-1 4 14-3 1z"/>
+{% elif name == 'editor' %}<path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3" fill="currentColor"/><circle cx="15" cy="17" r="3" fill="currentColor"/>
+{% elif name == 'download' %}<path d="M12 3v12m-4-4 4 4 4-4M4 16v5h16v-5"/>
+{% elif name == 'arrow' %}<path d="M5 12h14m-5-5 5 5-5 5"/>
+{% endif %}</svg>
+{%- endmacro %}
+
+{% macro story_image(url, lead=false) %}
+{% if url %}<figure class="story-media" data-story-media>
+  <img class="story-image" src="{{ url }}" alt="" loading="{{ 'eager' if lead else 'lazy' }}" decoding="async" referrerpolicy="no-referrer" {% if lead %}fetchpriority="high"{% endif %}>
+  <figcaption class="image-unavailable" hidden>Image unavailable · story text is available</figcaption>
+</figure>{% endif %}
+{% endmacro %}
