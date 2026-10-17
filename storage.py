@@ -21,7 +21,7 @@ def close_db(_error=None):
 def init_db():
     db = get_db()
     version = db.execute("PRAGMA user_version").fetchone()[0]
-    if version > 3:
+    if version > 4:
         raise RuntimeError("This database needs a newer version of MyNews.")
     if version == 0:
         db.executescript("""
@@ -122,6 +122,60 @@ def init_db():
             );
             CREATE INDEX feedback_recommendation_idx ON feedback_events(recommendation_id);
             PRAGMA user_version = 3;
+            COMMIT;
+        """)
+        version = 3
+    if version == 3:
+        db.executescript("""
+            BEGIN IMMEDIATE;
+            CREATE TABLE editions (
+                id TEXT PRIMARY KEY,
+                reader_id INTEGER NOT NULL REFERENCES readers(id) ON DELETE CASCADE,
+                local_date TEXT NOT NULL,
+                timezone TEXT NOT NULL,
+                scheduled_time TEXT NOT NULL,
+                generated_at TEXT NOT NULL,
+                cutoff_at TEXT NOT NULL,
+                status TEXT NOT NULL CHECK(status IN ('ready','short','empty','failed')),
+                profile_snapshot TEXT NOT NULL CHECK(json_valid(profile_snapshot)),
+                policy_version TEXT NOT NULL,
+                UNIQUE(reader_id, local_date)
+            );
+            CREATE TABLE edition_items (
+                id INTEGER PRIMARY KEY,
+                edition_id TEXT NOT NULL REFERENCES editions(id) ON DELETE CASCADE,
+                position INTEGER NOT NULL,
+                section TEXT NOT NULL,
+                article_id TEXT NOT NULL,
+                recommendation_id TEXT,
+                title TEXT NOT NULL,
+                publisher TEXT NOT NULL,
+                canonical_url TEXT NOT NULL,
+                published_at TEXT,
+                brief TEXT NOT NULL,
+                detail TEXT NOT NULL,
+                takeaway TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                word_count INTEGER NOT NULL,
+                UNIQUE(edition_id, position)
+            );
+            CREATE INDEX edition_reader_date_idx ON editions(reader_id, local_date DESC);
+            CREATE TABLE saved_stories (
+                reader_id INTEGER NOT NULL REFERENCES readers(id) ON DELETE CASCADE,
+                article_id TEXT NOT NULL REFERENCES articles(id) ON DELETE CASCADE,
+                edition_id TEXT REFERENCES editions(id) ON DELETE SET NULL,
+                saved_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+                PRIMARY KEY(reader_id, article_id)
+            );
+            CREATE TABLE reading_progress (
+                reader_id INTEGER NOT NULL REFERENCES readers(id) ON DELETE CASCADE,
+                edition_id TEXT NOT NULL REFERENCES editions(id) ON DELETE CASCADE,
+                item_id INTEGER NOT NULL REFERENCES edition_items(id) ON DELETE CASCADE,
+                completed INTEGER NOT NULL DEFAULT 0 CHECK(completed IN (0,1)),
+                updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+                PRIMARY KEY(reader_id, edition_id, item_id)
+            );
+            PRAGMA user_version = 4;
             COMMIT;
         """)
 

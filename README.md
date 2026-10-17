@@ -1,6 +1,6 @@
-# MyNews — Phase 3
+# MyNews — Phase 4
 
-A local Flask application for persistent reader profiles, real cached news, and adaptive Discover recommendations. Read [MYNEWS_PROJECT_REFERENCE.md](MYNEWS_PROJECT_REFERENCE.md) for the complete product plan. Phases 1–3 are implemented; daily editions and the archive are Phase 4.
+A local Flask application for persistent reader profiles, real cached news, adaptive Discover recommendations, and dated daily web editions. Read [MYNEWS_PROJECT_REFERENCE.md](MYNEWS_PROJECT_REFERENCE.md) for the complete product plan. Phases 1–4 are implemented; PDF/print layout and scheduling remain future phases.
 
 ## Run the application
 
@@ -49,7 +49,7 @@ The temporary-directory override works around a sandbox temp-directory permissio
 - Back, Next, and Skip save selections. JavaScript also saves draft changes, including valid morning settings. Wait for the saved message before refreshing; without JavaScript use Back/Next to persist changes.
 - Skipping broad interests records an explicit general-interest state; skipping regions records Worldwide. Worldwide must be selected alone or replaced with specific regions.
 - Browser timezone is a suggestion only. Confirmation is always required to finish, including after resuming a draft. An IANA identifier and strict `HH:MM` local time are validated server-side.
-- Today's Paper and My Library remain honest pre-edition states. Discover now shows cached recommendations with source links, reasons, and feedback. My Editor shows explicit choices, learned evidence, exclusions, reset, and setup links. Editing a setup choice marks setup incomplete until morning confirmation is completed again.
+- Today's Paper generates one reader-specific dated edition when cached content is available, with immutable story snapshots, source links, reasons, takeaways, feedback, saving, and reading progress. My Library archives editions and saved stories. Discover remains adaptive while a generated paper stays stable. My Editor shows explicit choices, learned evidence, exclusions, reset, and setup links. Editing a setup choice marks setup incomplete until morning confirmation is completed again.
 
 ## Persistence and local identity
 
@@ -74,7 +74,7 @@ $env:TMP = $env:TEMP
 .\.venv\Scripts\python.exe -m pip check
 ```
 
-Tests use temporary SQLite databases and test secrets, never the real application database or live news. See `BUILD_PROGRESS.md` for actual automated outcomes. For a manual check, run ingestion, complete setup, restart the app, select a reader, and open Discover. Today's Paper and My Library remain empty until Phase 4 creates dated editions and an archive.
+Tests use temporary SQLite databases and test secrets, never the real application database or live news. See `BUILD_PROGRESS.md` for actual automated outcomes. For a manual check, run ingestion, complete setup, restart the app, select a reader, and open Today's Paper, Discover, and My Library. No browser or visual checks are part of the automated verification for the current phase.
 
 ## Phase 2 news ingestion
 

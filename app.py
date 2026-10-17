@@ -16,6 +16,7 @@ from recommender import (
     learning_summary, mark_visible, recommend, record_feedback, reset_learning,
     set_exclusions,
 )
+from editions import archive, edition_items, generate_edition, get_today, saved_stories, set_progress, set_saved
 from taxonomy import ACTIVITIES, AGES, EDUCATION, REGIONS, STEPS, TOPICS
 
 ROOT = Path(__file__).resolve().parent
@@ -28,13 +29,21 @@ def calibration_candidates(prefs):
     db = get_db()
     rows = calibration_articles(db, prefs)
     if rows:
-        return [
-            {"id": row["id"], "topic": json.loads(row["topics"])[0]["topic"],
-             "subtopic": json.loads(row["topics"])[0]["subtopics"][0],
-             "title": row["title"], "publisher": row["publisher"],
-             "published_at": row["published_at"], "real": True}
-            for row in rows
-        ]
+        candidates = []
+        for row in rows:
+            topic_data = json.loads(row["topics"])
+            if not topic_data:
+                continue
+            topic = topic_data[0]["topic"]
+            subtopics = topic_data[0].get("subtopics") or TOPICS.get(topic, [])
+            candidates.append({
+                "id": row["id"], "topic": topic,
+                "subtopic": subtopics[0] if subtopics else "General",
+                "title": row["title"], "publisher": row["publisher"],
+                "published_at": row["published_at"], "real": True
+            })
+        if candidates:
+            return candidates
     interests = prefs.get("interests", [])
     return [x for x in EXAMPLES if not interests or x["topic"] in interests][:6]
 
@@ -207,6 +216,8 @@ def create_app(test_config=None):
                 db.commit()
                 if intent == "draft":
                     return jsonify(saved=True)
+                if complete:
+                    generate_edition(db, g.reader["id"], prefs)
                 return redirect(url_for("paper", welcome=1) if complete else url_for("onboarding", step=target))
             except ValueError as exc:
                 db.rollback()
@@ -224,8 +235,20 @@ def create_app(test_config=None):
         prefs = preferences(g.reader["id"])
         recommendations = recommend(get_db(), g.reader["id"], prefs) if page == "discover" else []
         learning = learning_summary(get_db(), g.reader["id"], prefs)
+        edition = None
+        items = []
+        editions = []
+        if page == "paper" and g.reader["onboarding_complete"]:
+            edition = get_today(get_db(), g.reader["id"], prefs.get("timezone", "UTC"))
+            if edition is None:
+                edition = generate_edition(get_db(), g.reader["id"], prefs)
+            items = edition_items(get_db(), edition["id"], g.reader["id"])
+        if page == "library":
+            editions = archive(get_db(), g.reader["id"])
+        saved = saved_stories(get_db(), g.reader["id"]) if page == "library" else []
         return render_template("shell.html", page=page, prefs=prefs,
-                               recommendations=recommendations, learning=learning)
+                               recommendations=recommendations, learning=learning,
+                               edition=edition, items=items, editions=editions, saved=saved)
 
     @app.get("/")
     def paper():
@@ -256,9 +279,65 @@ def create_app(test_config=None):
         mark_visible(get_db(), g.reader["id"], request.form.get("recommendation_id", ""))
         return redirect(url_for("discover"))
 
+    @app.post("/paper/feedback")
+    def paper_feedback():
+        if g.reader is None:
+            return redirect(url_for("profiles"))
+        try:
+            record_feedback(
+                get_db(), g.reader["id"], request.form.get("recommendation_id", ""),
+                request.form.get("event_id", secrets.token_hex(16)),
+                request.form.get("event_type", ""),
+            )
+        except ValueError as exc:
+            abort(400, description=str(exc))
+        return redirect(url_for("paper"))
+
+    @app.post("/paper/save")
+    def paper_save():
+        if g.reader is None:
+            return redirect(url_for("profiles"))
+        set_saved(get_db(), g.reader["id"], request.form.get("article_id", ""),
+                  request.form.get("edition_id", ""), request.form.get("saved") == "1")
+        return redirect(url_for("paper"))
+
+    @app.post("/paper/progress")
+    def paper_progress():
+        if g.reader is None:
+            return redirect(url_for("profiles"))
+        try:
+            set_progress(get_db(), g.reader["id"], request.form.get("edition_id", ""),
+                         int(request.form.get("item_id", "0")), request.form.get("completed") == "1")
+        except (ValueError, TypeError):
+            abort(400, description="That reading progress update is invalid.")
+        return redirect(url_for("paper"))
+
+    @app.post("/paper/visible")
+    def paper_visible():
+        if g.reader is None:
+            return redirect(url_for("profiles"))
+        mark_visible(get_db(), g.reader["id"], request.form.get("recommendation_id", ""))
+        return redirect(url_for("paper"))
+
     @app.get("/library")
     def library():
         return shell_page("library")
+
+    @app.get("/editions/<edition_id>")
+    def view_edition(edition_id):
+        if g.reader is None:
+            return redirect(url_for("profiles"))
+        edition = get_db().execute(
+            "SELECT * FROM editions WHERE id=? AND reader_id=?", (edition_id, g.reader["id"])
+        ).fetchone()
+        if edition is None:
+            abort(404, description="That edition could not be found.")
+        prefs = preferences(g.reader["id"])
+        return render_template("shell.html", page="paper", prefs=prefs, edition=edition,
+                               items=edition_items(get_db(), edition_id, g.reader["id"]),
+                               recommendations=[], learning=learning_summary(get_db(), g.reader["id"], prefs),
+                               reader=g.reader, editions=archive(get_db(), g.reader["id"]),
+                               saved=saved_stories(get_db(), g.reader["id"]))
 
     @app.get("/editor")
     def editor():

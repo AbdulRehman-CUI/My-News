@@ -51,7 +51,7 @@ class FoundationTests(unittest.TestCase):
         self.assertEqual(self.post("/profiles/select", {"profile_id": reader_id}, restarted).status_code, 302)
         self.assertTrue(self.stored(reader_id)["general_interest"])
         with closing(sqlite3.connect(self.config["DATABASE"])) as db:
-            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 3)
+            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 4)
 
     def test_valid_and_invalid_timezones_and_times(self):
         for timezone in ("Asia/Karachi", "America/New_York", "UTC", "Pacific/Auckland"):

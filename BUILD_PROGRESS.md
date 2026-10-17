@@ -125,3 +125,41 @@ Known gaps:
 - Phase 4 must snapshot recommendations into dated editions; Discover currently creates fresh recommendation records per request.
 - Source-open and active-reading events are supported by the event endpoint but do not yet have reading-page instrumentation.
 - The policy is deterministic and exposes no selection propensity. Recommendation quality is not measured; fixtures demonstrate mechanism only.
+
+## Phase 4 — personalized daily web editions
+
+Implemented:
+
+- Version-4 non-destructive migration adds reader-scoped `editions`, immutable
+  `edition_items`, `saved_stories`, and `reading_progress` tables. A unique
+  `(reader_id, local_date)` constraint and transactional claim make generation
+  idempotent; published snapshots do not change when source articles or preferences
+  later change.
+- `generate_edition()` is a callable manual/first-edition service. It reuses the
+  Phase 3 recommendation pool and records cutoff/generation times, timezone, profile
+  snapshot, policy version, sections, source metadata, deterministic briefs/details,
+  selection reasons, takeaways, and actual word counts. Empty and short editions are
+  represented honestly.
+- Today's Paper renders relevant stories with topic sections, expandable details,
+  source links/dates, text-only fallbacks, feedback, save/unsave, mark-seen
+  impressions, and persistent reading progress. The main estimate uses 220 words per
+  minute and the edition stores word counts; no padding or reading duration selector
+  was added.
+- Onboarding completion triggers first-edition generation when cached recommendations
+  exist. Reopening today's paper does not regenerate or alter it. My Library lists
+  owned editions and reader-scoped saved stories. Edition routes enforce ownership.
+
+Verification:
+
+- `.\.venv\Scripts\python.exe -m unittest discover -s tests -q`: 21 tests passed,
+  including Phase 4 idempotency, immutable snapshots, personalization, save/progress,
+  ownership, onboarding generation, and the Phase 1–3 regression suite.
+- No browser, visual, screenshot, or browser automation checks were performed.
+
+Known gaps:
+
+- The paper currently exposes an explicit “Mark seen” action rather than automatic
+  viewport instrumentation; no browser JavaScript was added under the requested
+  validation constraints.
+- Real-world editorial importance and recommendation quality are not claimed.
+- PDF/print layout and automatic scheduling remain out of scope for Phase 4.

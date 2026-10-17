@@ -51,7 +51,7 @@ class NewsTests(unittest.TestCase):
             self.assertEqual(response.status_code, 302)
         row = self.db.execute("SELECT display_name FROM readers").fetchone()
         self.assertEqual(row["display_name"], "Existing")
-        self.assertEqual(self.db.execute("PRAGMA user_version").fetchone()[0], 3)
+        self.assertEqual(self.db.execute("PRAGMA user_version").fetchone()[0], 4)
 
     def test_unsafe_extraction_and_embedding_fallback(self):
         self.assertIsNone(canonical_url("file:///etc/passwd"))
