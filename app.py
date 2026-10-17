@@ -17,6 +17,7 @@ from recommender import (
     set_exclusions,
 )
 from editions import archive, edition_items, generate_edition, get_today, saved_stories, set_progress, set_saved
+from pdf_export import export_pdf
 from taxonomy import ACTIVITIES, AGES, EDUCATION, REGIONS, STEPS, TOPICS
 
 ROOT = Path(__file__).resolve().parent
@@ -244,11 +245,13 @@ def create_app(test_config=None):
                 edition = generate_edition(get_db(), g.reader["id"], prefs)
             items = edition_items(get_db(), edition["id"], g.reader["id"])
         if page == "library":
-            editions = archive(get_db(), g.reader["id"])
-        saved = saved_stories(get_db(), g.reader["id"]) if page == "library" else []
+            query = request.args.get("q", "")
+            editions = archive(get_db(), g.reader["id"], query)
+        saved = saved_stories(get_db(), g.reader["id"], request.args.get("q", "")) if page == "library" else []
         return render_template("shell.html", page=page, prefs=prefs,
                                recommendations=recommendations, learning=learning,
-                               edition=edition, items=items, editions=editions, saved=saved)
+                               edition=edition, items=items, editions=editions, saved=saved,
+                               library_query=request.args.get("q", ""))
 
     @app.get("/")
     def paper():
@@ -323,6 +326,24 @@ def create_app(test_config=None):
     def library():
         return shell_page("library")
 
+    @app.get("/editions/<edition_id>/pdf")
+    def download_edition_pdf(edition_id):
+        if g.reader is None:
+            return redirect(url_for("profiles"))
+        db = get_db()
+        edition = db.execute(
+            "SELECT * FROM editions WHERE id=? AND reader_id=?", (edition_id, g.reader["id"])
+        ).fetchone()
+        if edition is None:
+            abort(404, description="That edition could not be found.")
+        try:
+            payload, _cached = export_pdf(ROOT, edition, edition_items(db, edition_id, g.reader["id"]))
+        except RuntimeError as exc:
+            abort(503, description=str(exc))
+        response = app.response_class(payload, mimetype="application/pdf")
+        response.headers["Content-Disposition"] = f'attachment; filename="mynews-{edition["local_date"]}.pdf"'
+        return response
+
     @app.get("/editions/<edition_id>")
     def view_edition(edition_id):
         if g.reader is None:
@@ -337,7 +358,7 @@ def create_app(test_config=None):
                                items=edition_items(get_db(), edition_id, g.reader["id"]),
                                recommendations=[], learning=learning_summary(get_db(), g.reader["id"], prefs),
                                reader=g.reader, editions=archive(get_db(), g.reader["id"]),
-                               saved=saved_stories(get_db(), g.reader["id"]))
+                               saved=saved_stories(get_db(), g.reader["id"]), library_query="")
 
     @app.get("/editor")
     def editor():

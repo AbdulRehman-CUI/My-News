@@ -75,10 +75,10 @@ def generate_edition(db, reader_id, prefs, now=None, limit=10):
             detail = article["detail"] or brief
             db.execute("""INSERT INTO edition_items
                 (edition_id, position, section, article_id, recommendation_id, title, publisher,
-                 canonical_url, published_at, brief, detail, takeaway, reason, word_count)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                 canonical_url, published_at, image_url, brief, detail, takeaway, reason, word_count)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (edition_id, position, _section(article), article["id"], item["id"], article["title"],
-                 article["publisher"], article["canonical_url"], article["published_at"], brief, detail,
+                 article["publisher"], article["canonical_url"], article["published_at"], article["image_url"], brief, detail,
                  _takeaway(brief), item["reason"], len(brief.split())))
         db.commit()
     except Exception:
@@ -104,13 +104,35 @@ def edition_items(db, edition_id, reader_id):
         (reader_id, reader_id, reader_id, edition_id)).fetchall()
 
 
-def archive(db, reader_id):
+def archive(db, reader_id, query=""):
+    query = (query or "").strip()
+    if query:
+        pattern = f"%{query}%"
+        return db.execute("""SELECT DISTINCT e.* FROM editions e
+            LEFT JOIN edition_items ei ON ei.edition_id=e.id
+            WHERE e.reader_id=? AND (e.local_date LIKE ? OR ei.title LIKE ? OR ei.brief LIKE ?)
+            ORDER BY e.local_date DESC""", (reader_id, pattern, pattern, pattern)).fetchall()
     return db.execute("SELECT * FROM editions WHERE reader_id=? ORDER BY local_date DESC", (reader_id,)).fetchall()
 
 
-def saved_stories(db, reader_id):
-    return db.execute("""SELECT ss.*, a.title, a.publisher, a.canonical_url, a.brief
+def saved_stories(db, reader_id, query=""):
+    query = (query or "").strip()
+    if query:
+        pattern = f"%{query}%"
+        return db.execute("""SELECT ss.*, COALESCE(ei.title, a.title) AS title,
+            COALESCE(ei.publisher, a.publisher) AS publisher,
+            COALESCE(ei.canonical_url, a.canonical_url) AS canonical_url,
+            COALESCE(ei.brief, a.brief) AS brief
+            FROM saved_stories ss JOIN articles a ON a.id=ss.article_id
+            LEFT JOIN edition_items ei ON ei.edition_id=ss.edition_id AND ei.article_id=ss.article_id
+            WHERE ss.reader_id=? AND (COALESCE(ei.title, a.title) LIKE ? OR COALESCE(ei.brief, a.brief) LIKE ?)
+            ORDER BY ss.saved_at DESC""", (reader_id, pattern, pattern)).fetchall()
+    return db.execute("""SELECT ss.*, COALESCE(ei.title, a.title) AS title,
+        COALESCE(ei.publisher, a.publisher) AS publisher,
+        COALESCE(ei.canonical_url, a.canonical_url) AS canonical_url,
+        COALESCE(ei.brief, a.brief) AS brief
         FROM saved_stories ss JOIN articles a ON a.id=ss.article_id
+        LEFT JOIN edition_items ei ON ei.edition_id=ss.edition_id AND ei.article_id=ss.article_id
         WHERE ss.reader_id=? ORDER BY ss.saved_at DESC""", (reader_id,)).fetchall()
 
 

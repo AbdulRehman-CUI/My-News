@@ -1,6 +1,6 @@
-# MyNews — Phase 4
+# MyNews — Phase 5
 
-A local Flask application for persistent reader profiles, real cached news, adaptive Discover recommendations, and dated daily web editions. Read [MYNEWS_PROJECT_REFERENCE.md](MYNEWS_PROJECT_REFERENCE.md) for the complete product plan. Phases 1–4 are implemented; PDF/print layout and scheduling remain future phases.
+A local Flask application for persistent reader profiles, real cached news, adaptive Discover recommendations, dated daily web editions, and newspaper PDF export. Read [MYNEWS_PROJECT_REFERENCE.md](MYNEWS_PROJECT_REFERENCE.md) for the complete product plan. Phases 1–5 are implemented; scheduling remains a future phase.
 
 ## Run the application
 
@@ -50,6 +50,7 @@ The temporary-directory override works around a sandbox temp-directory permissio
 - Skipping broad interests records an explicit general-interest state; skipping regions records Worldwide. Worldwide must be selected alone or replaced with specific regions.
 - Browser timezone is a suggestion only. Confirmation is always required to finish, including after resuming a draft. An IANA identifier and strict `HH:MM` local time are validated server-side.
 - Today's Paper generates one reader-specific dated edition when cached content is available, with immutable story snapshots, source links, reasons, takeaways, feedback, saving, and reading progress. My Library archives editions and saved stories. Discover remains adaptive while a generated paper stays stable. My Editor shows explicit choices, learned evidence, exclusions, reset, and setup links. Editing a setup choice marks setup incomplete until morning confirmation is completed again.
+- My Library searches saved edition titles/summaries, provides resume-reading links, and downloads the same saved edition as a traditional newspaper PDF. PDF export uses Playwright Chromium, preserves snapshot order/content, omits interactive controls, and caches output by edition generation revision.
 
 ## Persistence and local identity
 
@@ -73,6 +74,16 @@ $env:TMP = $env:TEMP
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 .\.venv\Scripts\python.exe -m pip check
 ```
+
+Install the PDF browser once after installing requirements:
+
+```powershell
+.\.venv\Scripts\python.exe -m playwright install chromium
+```
+
+If PDF export reports that Chromium is unavailable, rerun that command. Generated
+PDFs are stored under ignored `generated/`; PDF export does not fetch remote images
+and falls back to text-only story content.
 
 Tests use temporary SQLite databases and test secrets, never the real application database or live news. See `BUILD_PROGRESS.md` for actual automated outcomes. For a manual check, run ingestion, complete setup, restart the app, select a reader, and open Today's Paper, Discover, and My Library. No browser or visual checks are part of the automated verification for the current phase.
 

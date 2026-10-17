@@ -1,0 +1,37 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+@page { size: A4; }
+* { box-sizing: border-box; }
+body { color: #1e2925; font-family: Georgia, "Times New Roman", serif; margin: 0; }
+.masthead { border-bottom: 3px double #1e2925; padding-bottom: 8px; text-align: center; }
+.masthead h1 { font-size: 30px; letter-spacing: .08em; margin: 0; text-transform: uppercase; }
+.date { font: 10px Arial, sans-serif; letter-spacing: .12em; margin-top: 6px; text-transform: uppercase; }
+.lead { border-bottom: 1px solid #9ca7a1; margin-bottom: 14px; padding: 14px 0; }
+.lead h2 { font-size: 25px; margin: 0 0 7px; }
+.section { break-inside: avoid; margin-bottom: 13px; }
+.section-name { border-bottom: 1px solid #1e2925; font: bold 11px Arial, sans-serif; letter-spacing: .12em; margin: 0 0 8px; padding-bottom: 3px; text-transform: uppercase; }
+.story { break-inside: avoid; margin-bottom: 12px; }
+.story h3 { font-size: 16px; line-height: 1.12; margin: 0 0 4px; }
+.story p { font-size: 10.5px; line-height: 1.42; margin: 4px 0; }
+.story .detail { column-count: 2; column-gap: 16px; }
+.source { color: #4e5b55; font: 8px Arial, sans-serif; overflow-wrap: anywhere; }
+.takeaway { border-left: 2px solid #71877c; font-style: italic; padding-left: 7px; }
+.page-footer { color: #4e5b55; font: 8px Arial, sans-serif; text-align: center; width: 100%; }
+</style>
+</head>
+<body>
+<header class="masthead"><h1>MyNews</h1><div class="date">{{ edition.local_date }} · Personal daily edition</div></header>
+{% for item in items %}
+{% if loop.first %}<section class="lead"><h2>{{ item.title }}</h2><p>{{ item.brief }}</p><p class="source">{{ item.publisher }} · {{ item.published_at or 'Publication date unknown' }} · {{ item.canonical_url }}</p></section>{% endif %}
+{% endfor %}
+{% set namespace = namespace(section='') %}
+{% for item in items %}
+{% if item.section != namespace.section %}{% if not loop.first %}</section>{% endif %}{% set namespace.section = item.section %}<section class="section"><h2 class="section-name">{{ item.section }}</h2>{% endif %}
+<article class="story"><h3>{{ item.position }}. {{ item.title }}</h3><p>{{ item.brief }}</p><div class="detail"><p>{{ item.detail }}</p></div><p class="takeaway">Takeaway: {{ item.takeaway }}</p><p class="source">Original source: {{ item.publisher }} · {{ item.published_at or 'Publication date unknown' }} · {{ item.canonical_url }}</p></article>
+{% if loop.last %}</section>{% endif %}
+{% endfor %}
+</body>
+</html>

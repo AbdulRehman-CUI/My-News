@@ -5,6 +5,8 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
+from flask import render_template
+
 from app import create_app
 from editions import edition_items, generate_edition, set_progress, set_saved
 
@@ -48,6 +50,13 @@ class EditionTests(unittest.TestCase):
         stored = self.db.execute("SELECT title,brief FROM edition_items").fetchone()
         self.assertEqual(tuple(stored), tuple(original))
 
+    def test_print_template_preserves_snapshot_order(self):
+        edition = generate_edition(self.db, 1, self.prefs, now=datetime(2026, 10, 17, 8, tzinfo=timezone.utc), limit=3)
+        with self.app.test_request_context("/"):
+            html = render_template("newspaper.html", edition=edition, items=edition_items(self.db, edition["id"], 1))
+        positions = [html.index(f">{number}. Story") for number in (1, 2, 3)]
+        self.assertEqual(positions, sorted(positions))
+
     def test_personalization_and_persistent_save_progress(self):
         now = datetime(2026, 10, 17, 8, tzinfo=timezone.utc)
         first = generate_edition(self.db, 1, self.prefs, now=now, limit=3)
@@ -63,6 +72,23 @@ class EditionTests(unittest.TestCase):
         self.assertEqual(refreshed["completed"], 1)
         with self.assertRaises(ValueError):
             set_progress(self.db, 2, first["id"], item["id"], True)
+
+    def test_library_search_and_owned_archive_download_route(self):
+        first = generate_edition(self.db, 1, self.prefs, now=datetime(2026, 10, 17, 8, tzinfo=timezone.utc), limit=3)
+        client = self.app.test_client()
+        with client.session_transaction() as state:
+            state["reader_id"] = 1
+        response = client.get("/library?q=Story+0")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Story 0", response.data)
+        self.assertIn(first["local_date"].encode(), response.data)
+        pdf = client.get(f"/editions/{first['id']}/pdf")
+        self.assertEqual(pdf.status_code, 200)
+        self.assertEqual(pdf.mimetype, "application/pdf")
+        self.assertTrue(pdf.data.startswith(b"%PDF-"))
+        with client.session_transaction() as state:
+            state["reader_id"] = 2
+        self.assertEqual(client.get(f"/editions/{first['id']}/pdf").status_code, 404)
 
     def test_onboarding_completion_creates_first_empty_or_ready_edition(self):
         client = self.app.test_client()

@@ -21,7 +21,7 @@ def close_db(_error=None):
 def init_db():
     db = get_db()
     version = db.execute("PRAGMA user_version").fetchone()[0]
-    if version > 4:
+    if version > 5:
         raise RuntimeError("This database needs a newer version of MyNews.")
     if version == 0:
         db.executescript("""
@@ -178,6 +178,15 @@ def init_db():
             PRAGMA user_version = 4;
             COMMIT;
         """)
+        version = 4
+    if version == 4:
+        db.executescript("""
+            BEGIN IMMEDIATE;
+            ALTER TABLE edition_items ADD COLUMN image_url TEXT;
+            PRAGMA user_version = 5;
+            COMMIT;
+        """)
+        version = 5
 
 
 def preferences(reader_id):

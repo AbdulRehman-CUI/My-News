@@ -163,3 +163,39 @@ Known gaps:
   validation constraints.
 - Real-world editorial importance and recommendation quality are not claimed.
 - PDF/print layout and automatic scheduling remain out of scope for Phase 4.
+
+## Phase 5 — newspaper PDF export and archive
+
+Implemented:
+
+- Version-5 non-destructive migration adds immutable `image_url` snapshots to
+  edition items. PDF export reads only the saved edition and item rows; it never
+  reranks, regenerates summaries, or reads mutable article content.
+- Added a separate traditional newspaper template with masthead, date, lead story,
+  topic sections, readable detail columns, source references, and Playwright page
+  numbers. Interactive controls are excluded from the PDF.
+- Added `/editions/<edition_id>/pdf`, ownership checks, meaningful missing-browser
+  errors, and ignored filesystem caching keyed by edition ID and generation revision.
+  Remote images are not fetched during export, so PDF generation is not blocked by
+  image hosts.
+- My Library now supports title/summary search, dated previous editions, resume
+  links, saved-story summaries, and old-edition PDF downloads. Existing saves and
+  reading progress remain reader-scoped and visible.
+
+Verification:
+
+- Installed `playwright==1.51.0` and Chromium with
+  `.\.venv\Scripts\python.exe -m playwright install chromium`.
+- `.\.venv\Scripts\python.exe -m unittest tests.test_editions tests.test_foundation tests.test_news tests.test_recommender -q`: 22 tests passed.
+- Tests verify PDF signature (`%PDF-`), `application/pdf` content type, archive search,
+  PDF ownership isolation, Phase 4 snapshot behavior, save/progress persistence, and
+  Phase 1–3 regressions.
+- `pip check`, Python compilation, and `git diff --check` passed.
+
+Known gaps:
+
+- Automated checks verify PDF bytes and route behavior; visual inspection of every
+  rendered PDF page was not performed in this terminal-only run.
+- PDF output intentionally uses text-only source snapshots and does not claim that
+  external publisher images remain available.
+- Automatic scheduling remains out of scope for Phase 5.
