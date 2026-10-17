@@ -1,6 +1,6 @@
-# MyNews — Phase 5
+# MyNews — Phase 6
 
-A local Flask application for persistent reader profiles, real cached news, adaptive Discover recommendations, dated daily web editions, and newspaper PDF export. Read [MYNEWS_PROJECT_REFERENCE.md](MYNEWS_PROJECT_REFERENCE.md) for the complete product plan. Phases 1–5 are implemented; scheduling remains a future phase.
+A local Flask application for persistent reader profiles, real cached news, adaptive Discover recommendations, dated daily web editions, newspaper PDF export, and a separate local scheduling worker. Read [MYNEWS_PROJECT_REFERENCE.md](MYNEWS_PROJECT_REFERENCE.md) for the complete product plan. Phases 1–6 are implemented; deployment remains out of scope.
 
 ## Run the application
 
@@ -10,6 +10,25 @@ The project already has a local `.venv`. From Windows PowerShell:
 Set-Location -LiteralPath "C:\Users\J A\Desktop\Nascon 26'"
 .\.venv\Scripts\python.exe app.py
 ```
+
+In a second PowerShell window, run the worker:
+
+```powershell
+Set-Location -LiteralPath "C:\Users\J A\Desktop\Nascon 26'"
+.\.venv\Scripts\python.exe worker.py
+```
+
+For a single scheduling pass:
+
+```powershell
+.\.venv\Scripts\python.exe worker.py --once
+```
+
+The worker uses the first occurrence for ambiguous DST times and the first valid
+instant after a nonexistent spring-forward time. It stores UTC timestamps and
+reader-local dates. To create isolated labeled local demo readers without fictional
+news, run `.\.venv\Scripts\python.exe demo.py`; rerun it to reuse them. Demo profiles
+use the existing cached pool when one is available.
 
 Open **http://127.0.0.1:5000**. Stop with Ctrl+C. Startup initializes the database automatically; no API key, model, browser download, or frontend build is needed just to start the app. Run the Phase 2 ingestion command once to populate cached news before opening Discover. Debug mode is off and the server binds only to `127.0.0.1`.
 
@@ -51,6 +70,7 @@ The temporary-directory override works around a sandbox temp-directory permissio
 - Browser timezone is a suggestion only. Confirmation is always required to finish, including after resuming a draft. An IANA identifier and strict `HH:MM` local time are validated server-side.
 - Today's Paper generates one reader-specific dated edition when cached content is available, with immutable story snapshots, source links, reasons, takeaways, feedback, saving, and reading progress. My Library archives editions and saved stories. Discover remains adaptive while a generated paper stays stable. My Editor shows explicit choices, learned evidence, exclusions, reset, and setup links. Editing a setup choice marks setup incomplete until morning confirmation is completed again.
 - My Library searches saved edition titles/summaries, provides resume-reading links, and downloads the same saved edition as a traditional newspaper PDF. PDF export uses Playwright Chromium, preserves snapshot order/content, omits interactive controls, and caches output by edition generation revision.
+- `worker.py` is a separate local process. It prepares shared content up to six hours ahead, performs a bounded refresh within 30 minutes of a reader's cutoff, and generates due editions using each reader's saved IANA timezone and ready time. Claims/statuses are persisted and retries are capped at three attempts. The computer and worker must be running; restart catch-up generates only today's due edition.
 
 ## Persistence and local identity
 

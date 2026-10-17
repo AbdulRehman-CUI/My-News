@@ -21,7 +21,7 @@ def close_db(_error=None):
 def init_db():
     db = get_db()
     version = db.execute("PRAGMA user_version").fetchone()[0]
-    if version > 5:
+    if version > 6:
         raise RuntimeError("This database needs a newer version of MyNews.")
     if version == 0:
         db.executescript("""
@@ -187,6 +187,24 @@ def init_db():
             COMMIT;
         """)
         version = 5
+    if version == 5:
+        db.executescript("""
+            BEGIN IMMEDIATE;
+            CREATE TABLE worker_jobs (
+                reader_id INTEGER NOT NULL REFERENCES readers(id) ON DELETE CASCADE,
+                local_date TEXT NOT NULL,
+                status TEXT NOT NULL CHECK(status IN ('claimed','preparing','generating','succeeded','failed')),
+                attempts INTEGER NOT NULL DEFAULT 0,
+                claimed_at TEXT,
+                completed_at TEXT,
+                last_error TEXT,
+                PRIMARY KEY(reader_id, local_date)
+            );
+            CREATE INDEX worker_jobs_status_idx ON worker_jobs(status, local_date);
+            PRAGMA user_version = 6;
+            COMMIT;
+        """)
+        version = 6
 
 
 def preferences(reader_id):

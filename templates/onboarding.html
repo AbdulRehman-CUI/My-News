@@ -40,7 +40,7 @@
         <p class="field-help" id="timezone-help">Your browser’s timezone is suggested when available. Confirm it or choose another.</p>
         <label class="field-label" for="morning-time">Morning-ready time</label>
         <input type="time" id="morning-time" name="morning_time" value="{{ submitted.get('morning_time', '') if submitted else prefs.get('morning_time', '07:00') }}" required aria-describedby="time-help">
-        <p class="field-help" id="time-help">Local time in your selected timezone. The time is a preference; scheduling is not active yet.</p>
+        <p class="field-help" id="time-help">Local time in your selected timezone. The separate local worker uses this as the target ready time when it is running.</p>
         <label class="confirm-choice"><input type="checkbox" name="confirmed" value="yes" required><span>I confirm this timezone and ready time.</span></label>
       {% endif %}
       </fieldset>

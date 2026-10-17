@@ -199,3 +199,43 @@ Known gaps:
 - PDF output intentionally uses text-only source snapshots and does not claim that
   external publisher images remain available.
 - Automatic scheduling remains out of scope for Phase 5.
+
+## Phase 6 — scheduling and end-to-end verification
+
+Implemented:
+
+- Added standalone [worker.py](worker.py), reusing `news.ingest()` and
+  `editions.generate_edition()`. It prepares shared content up to six hours ahead,
+  requests a bounded near-cutoff refresh within 30 minutes, computes due readers
+  using saved IANA timezone and morning-ready time, and generates only the current
+  local date.
+- Added version-6 `worker_jobs` persistence with atomic reader/date claims,
+  statuses, attempt counts, timestamps, bounded three-attempt retries, and
+  recoverable failure messages. Existing successful editions are never deleted or
+  overwritten. Restart catch-up is limited to today's due edition.
+- Documented DST policy: ambiguous local times use the first occurrence; nonexistent
+  spring-forward times use the first valid instant after the requested wall time.
+  Actual cutoff/generation timestamps remain visible in editions. The worker is a
+  separate local process and cannot run while the computer is off.
+- Added [demo.py](demo.py) for isolated labeled demo profiles. It creates no
+  fictional stories and reuses real cached news when available.
+- Added offline GitHub Actions checks in `.github/workflows/ci.yml`; CI runs the
+  deterministic unittest suite and does not require live news, model downloads, or
+  Chromium installation.
+
+Verification:
+
+- Worker tests use injected clocks and cover timezone/date boundaries, DST
+  resolution, duplicate claims, bounded failure persistence, and reader isolation.
+- Existing end-to-end tests cover two readers, fixture content, feedback/policy
+  persistence, editions, PDF signature/content type, archive search, ownership,
+  and restart-compatible migrations.
+- Live-source ingestion previously produced cached real articles; Playwright
+  Chromium was installed and PDF bytes were verified.
+
+Not run:
+
+- No long-running worker was left running.
+- No browser visual inspection of every PDF page or mobile viewport was performed
+  in this terminal-only validation run.
+- No real model download or live API smoke request was repeated during Phase 6.
