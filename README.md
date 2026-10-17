@@ -1,90 +1,259 @@
-# MyNews — Phase 6
+# MyNews
 
-A local Flask application for persistent reader profiles, real cached news, adaptive Discover recommendations, dated daily web editions, newspaper PDF export, and a separate local scheduling worker. Read [MYNEWS_PROJECT_REFERENCE.md](MYNEWS_PROJECT_REFERENCE.md) for the complete product plan. Phases 1–6 are implemented; deployment remains out of scope.
+MyNews is a local, privacy-conscious personal morning newspaper. It collects
+real news from configured RSS/Atom feeds and optional TheNewsAPI access, prepares
+usable article content locally, learns each reader's interests from explicit
+choices and reading feedback, and creates a dated daily edition.
 
-## Run the application
+Readers can:
 
-The project already has a local `.venv`. From Windows PowerShell:
+- Create and switch between local reader profiles.
+- Choose broad interests, subtopics, regions, and a preferred local ready time.
+- Browse adaptive recommendations in Discover.
+- Read a stable, reader-specific Today's Paper.
+- Save stories, provide feedback, and track reading progress.
+- Search the personal library and resume previous editions.
+- Download an edition as a traditional newspaper PDF.
+- Run a separate local worker that prepares content and generates due editions.
+
+All application data is stored locally in SQLite. The application does not
+require an account service, cloud database, frontend build system, or deployment
+platform.
+
+## Architecture
+
+The application is a small Flask and SQLite system with separate modules:
+
+- `app.py` — Flask routes, sessions, onboarding, reader selection, web pages,
+  feedback, saving, progress, library, and PDF download.
+- `storage.py` — SQLite connection handling, foreign keys, and non-destructive
+  schema migrations.
+- `news.py` — RSS/Atom and optional TheNewsAPI ingestion, canonical URL
+  deduplication, bounded article extraction, deterministic briefs/details,
+  content-depth classification, and local embedding preparation.
+- `recommender.py` — reader-scoped preferences, semantic anchors, recent-interest
+  decay, exclusions, persisted LinUCB state, recommendation explanations, and
+  feedback events.
+- `editions.py` — dated edition creation, transactional reader/date uniqueness,
+  immutable story snapshots, saved stories, and reading progress.
+- `pdf_export.py` — Playwright Chromium PDF generation from immutable edition
+  snapshots with local cache files.
+- `worker.py` — separate local scheduling process that reuses ingestion and
+  edition-generation services.
+- `demo.py` — creates labeled local demo readers without creating fictional
+  production stories.
+- `templates/` and `static/` — responsive web templates, newspaper print
+  template, and local styling.
+
+### Data flow
+
+1. `news.py` fetches shared provider content and stores normalized articles in
+   SQLite. It is run manually or by the worker; page loads do not make separate
+   provider requests for each reader.
+2. Onboarding stores validated reader preferences and a saved IANA timezone.
+3. `recommender.py` selects eligible stories using explicit interests, learned
+   signals, semantic similarity, freshness, significance, diversity, and bounded
+   exploration.
+4. `editions.py` copies the selected fields into immutable edition-item rows.
+   Later article updates, preference changes, and feedback do not rewrite a
+   published edition.
+5. The website reads those snapshots for Today's Paper and the archive.
+6. `pdf_export.py` renders the same snapshots into a downloadable newspaper PDF.
+7. `worker.py` prepares shared content ahead of reader cutoff times and claims
+   due reader/date jobs without overlapping duplicate generation.
+
+## Requirements
+
+- Windows, macOS, or Linux.
+- Python 3.12 recommended.
+- Internet access for dependency installation and optional live ingestion.
+- Chromium installed through Playwright for PDF downloads.
+- A writable local directory for SQLite, cached models, and generated PDFs.
+
+The application and automated tests can run offline after dependencies and
+optional local model/browser assets have been installed. RSS ingestion works
+without a TheNewsAPI key.
+
+## Installation on Windows
+
+From PowerShell:
+
+```powershell
+Set-Location -LiteralPath "C:\Users\J A\Desktop\Nascon 26'"
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m playwright install chromium
+.\.venv\Scripts\python.exe -m pip check
+```
+
+If the Windows Python launcher is unavailable, use a normal Python 3.12
+installation and replace the `py -3.12` command with its executable path.
+The repository's local `.venv` must be created before running the commands below.
+
+## Running the application
+
+Start the web application in one PowerShell window:
 
 ```powershell
 Set-Location -LiteralPath "C:\Users\J A\Desktop\Nascon 26'"
 .\.venv\Scripts\python.exe app.py
 ```
 
-In a second PowerShell window, run the worker:
+Open <http://127.0.0.1:5000>. The server binds only to localhost and initializes
+the SQLite database automatically.
+
+Start the local worker in a second PowerShell window:
 
 ```powershell
 Set-Location -LiteralPath "C:\Users\J A\Desktop\Nascon 26'"
 .\.venv\Scripts\python.exe worker.py
 ```
 
-For a single scheduling pass:
+Run one scheduling pass and exit:
 
 ```powershell
 .\.venv\Scripts\python.exe worker.py --once
 ```
 
-The worker uses the first occurrence for ambiguous DST times and the first valid
-instant after a nonexistent spring-forward time. It stores UTC timestamps and
-reader-local dates. To create isolated labeled local demo readers without fictional
-news, run `.\.venv\Scripts\python.exe demo.py`; rerun it to reuse them. Demo profiles
-use the existing cached pool when one is available.
+The computer and worker must be running for scheduled generation. If the
+computer is off, no edition can be generated. On restart, the worker catches up
+only the current local date when it is due; it does not fabricate missed
+historical editions.
 
-Open **http://127.0.0.1:5000**. Stop with Ctrl+C. Startup initializes the database automatically; no API key, model, browser download, or frontend build is needed just to start the app. Run the Phase 2 ingestion command once to populate cached news before opening Discover. Debug mode is off and the server binds only to `127.0.0.1`.
+Stop each process with `Ctrl+C`.
 
-## Set up from scratch
+## News ingestion
 
-Use Python 3.12 (verified here with 3.12.14), including pip and venv. On a machine with the standard Windows Python launcher:
-
-```powershell
-Set-Location -LiteralPath "C:\Users\J A\Desktop\Nascon 26'"
-py -3.12 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe -m pip check
-.\.venv\Scripts\python.exe app.py
-```
-
-On this computer `py` is absent and `python` points to an unusable Windows Store alias. The Codex bundled Python was verified instead. These are the exact alternative setup commands; activation and execution-policy changes are unnecessary:
+The manual ingestion command prepares the shared article pool:
 
 ```powershell
 Set-Location -LiteralPath "C:\Users\J A\Desktop\Nascon 26'"
-$mynewsPython = 'C:\Users\J A\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe'
-New-Item -ItemType Directory -Force .tmp | Out-Null
-$env:TEMP = Join-Path (Get-Location) '.tmp'
-$env:TMP = $env:TEMP
-& $mynewsPython -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe -m pip check
-.\.venv\Scripts\python.exe app.py
+.\.venv\Scripts\python.exe news.py
 ```
 
-The temporary-directory override works around a sandbox temp-directory permission error encountered during setup. It applies only to that PowerShell session. The bundled runtime path is machine-specific; use a normal Python 3.12 installation on other machines. Installation needs network access to PyPI. App operation and tests are offline after installation.
+To enable TheNewsAPI for that PowerShell session:
 
-## What works
+```powershell
+$env:THENEWSAPI_KEY = "YOUR_REAL_SERVER_SIDE_KEY"
+.\.venv\Scripts\python.exe news.py
+```
 
-- Create profiles with an optional display name or generated `Reader N` name; select profiles and resume setup.
-- Eight stages: optional age, education, multiple activities, multiple broad interests, adaptive subtopics, regions, labeled fictional headline calibration, and confirmed timezone/native time selection.
-- All twelve broad interests have subtopics in `taxonomy.py`. No free-text interest questions, reading-duration setting, or demographic inference.
-- Back, Next, and Skip save selections. JavaScript also saves draft changes, including valid morning settings. Wait for the saved message before refreshing; without JavaScript use Back/Next to persist changes.
-- Skipping broad interests records an explicit general-interest state; skipping regions records Worldwide. Worldwide must be selected alone or replaced with specific regions.
-- Browser timezone is a suggestion only. Confirmation is always required to finish, including after resuming a draft. An IANA identifier and strict `HH:MM` local time are validated server-side.
-- Today's Paper generates one reader-specific dated edition when cached content is available, with immutable story snapshots, source links, reasons, takeaways, feedback, saving, and reading progress. My Library archives editions and saved stories. Discover remains adaptive while a generated paper stays stable. My Editor shows explicit choices, learned evidence, exclusions, reset, and setup links. Editing a setup choice marks setup incomplete until morning confirmation is completed again.
-- My Library searches saved edition titles/summaries, provides resume-reading links, and downloads the same saved edition as a traditional newspaper PDF. PDF export uses Playwright Chromium, preserves snapshot order/content, omits interactive controls, and caches output by edition generation revision.
-- `worker.py` is a separate local process. It prepares shared content up to six hours ahead, performs a bounded refresh within 30 minutes of a reader's cutoff, and generates due editions using each reader's saved IANA timezone and ready time. Claims/statuses are persisted and retries are capped at three attempts. The computer and worker must be running; restart catch-up generates only today's due edition.
+Do not use the literal string `YOUR_REAL_SERVER_SIDE_KEY`. The key is read only
+from the server-side environment and is never sent to browser JavaScript or
+printed in request URLs. The repository does not automatically load `.env`;
+`.env.example` contains placeholders only. Never commit a real key.
 
-## Persistence and local identity
+The command reports attempted and successful sources, new and duplicate
+articles, usable and preview-only content, embedding reuse/creation, remaining
+local API allowance, and redacted provider errors.
 
-SQLite is stored at ignored `instance/mynews.sqlite3`. The schema preserves `readers` and `preferences` and now adds the Phase 2 article cache plus Phase 3 learning, recommendation, and feedback tables. Schema migrations are tracked through `PRAGMA user_version`; a newer database version fails explicitly. Foreign keys, checks, parameterized queries, and transactions protect writes. Onboarding writes take an immediate transaction before reading and updating preferences.
+RSS/Atom feeds are configured in `news.py`. To replace the defaults, set
+`MYNEWS_RSS_FEEDS` to a JSON object mapping feed URLs to supported topics:
 
-Preferences include `age`, `education`, `activities`, `interests`, `general_interest`, `subtopics` (`Topic:Subtopic` values), `regions`, `calibration` (setup IDs), `calibration_preferences` (topic/subtopic snapshots), `timezone`, `morning_time`, and `schedule_confirmed`. Missing optional draft fields mean the stage has not yet been saved. Skips save explicit empty/default values.
+```powershell
+$env:MYNEWS_RSS_FEEDS = '{"https://example.com/feed.xml":["Technology"]}'
+```
 
-The selected reader ID and CSRF token live in a signed HttpOnly/SameSite=Lax session cookie. The signature key is generated once into ignored `instance/secret.key`, so sessions survive app restarts. An optional `MYNEWS_SECRET_KEY` environment variable overrides that file. `.env.example` is documentation with placeholders; `.env` is **not** automatically loaded. Never commit an actual key. HTTP cookies are appropriate only for this localhost prototype; public hosting needs HTTPS with Secure cookies and real authentication/authorization.
+The ingestion path uses bounded timeouts and retries, canonical URL
+deduplication, a persisted API request budget, safe public URL validation,
+bounded extraction from configured publisher hosts, and explicit content-depth
+labels:
 
-All state changes use POST and CSRF validation. Onboarding resolves ownership from the session and rejects submitted reader/profile/user identifiers. The explicit local profile-selection endpoint intentionally accepts a profile ID. Anyone who can use the app on this computer can select any local profile: **this is not production authentication or a privacy boundary between local users**. No data is sent to news services or third-party assets. Templates escape names and values; restrictive content/security headers and host validation are enabled.
+- `full_text` — substantial extracted article text.
+- `feed_text` — usable text supplied by a feed or API response.
+- `preview_only` — insufficient content for a full reading edition.
 
-Restarting preserves profiles, incomplete choices, confirmed settings, and the selected session. If cookies are removed, select the saved profile again. Back up the database while the app is stopped if needed. Do not delete `instance/` to clear browser checks unless you intend to remove all local profiles and the session key.
+Preview-only records are not silently treated as full articles.
 
-## Checks
+## Local embeddings
+
+The configured model is:
+
+```text
+sentence-transformers/all-MiniLM-L6-v2
+```
+
+It runs locally on CPU. Embeddings are cached by model identifier and article
+content hash. The model input consists of the title, deterministic brief, and up
+to 6,000 characters of deterministic detail. If the model cannot be downloaded,
+ingestion reports the failure and remains usable for RSS/content checks; it does
+not claim neural inference succeeded.
+
+## Scheduling and timezones
+
+Each completed reader profile stores an IANA timezone and local ready time.
+`worker.py`:
+
+- Prepares shared content up to six hours before due editions.
+- Performs a bounded refresh within 30 minutes of the scheduled cutoff.
+- Computes each reader's current local date and due time.
+- Claims one reader/date job transactionally.
+- Stores claim status, attempt count, timestamps, and recoverable errors.
+- Limits retry attempts to three.
+- Preserves successful editions and never overwrites them with a failed run.
+
+Timestamps are stored in UTC while edition dates and schedules are reader-local.
+For daylight-saving transitions, ambiguous times use the first occurrence.
+Nonexistent spring-forward times use the first valid instant after the requested
+wall-clock time.
+
+The web edition displays its actual generation and cutoff timestamps. A worker
+job is not a guarantee that a provider will return enough usable content; empty
+and shorter editions are reported honestly.
+
+## Demo readers
+
+Create or reuse isolated, labeled local demo readers:
+
+```powershell
+Set-Location -LiteralPath "C:\Users\J A\Desktop\Nascon 26'"
+.\.venv\Scripts\python.exe demo.py
+```
+
+Demo readers use the existing cached real-news pool. The command does not create
+fictional production articles. Fictional stories are restricted to automated
+test fixtures.
+
+## Security and privacy
+
+- SQLite is stored at ignored `instance/mynews.sqlite3`.
+- The session secret is stored at ignored `instance/secret.key` unless
+  `MYNEWS_SECRET_KEY` is supplied.
+- Session cookies are signed, HttpOnly, and SameSite=Lax.
+- POST actions require CSRF validation.
+- SQL writes use parameters and foreign keys.
+- Templates escape rendered values.
+- Article extraction blocks private, loopback, link-local, and reserved
+  destinations.
+- API credentials remain server-side.
+
+This is a local prototype, not a production authentication system. Anyone who
+can use the computer can select any local reader profile. Public hosting would
+require HTTPS, real authentication, authorization, and a separate deployment
+design.
+
+## PDF export
+
+PDFs are generated from saved edition snapshots:
+
+```text
+GET /editions/<edition_id>/pdf
+```
+
+The export preserves story order, briefs, details, takeaways, dates, publishers,
+and original source references. It does not rerank stories, regenerate text,
+read mutable article content, or depend on remote images. Cached files are stored
+under ignored `generated/`.
+
+If PDF export reports that Chromium is unavailable:
+
+```powershell
+.\.venv\Scripts\python.exe -m playwright install chromium
+```
+
+## Tests and CI
+
+Run the complete local suite:
 
 ```powershell
 Set-Location -LiteralPath "C:\Users\J A\Desktop\Nascon 26'"
@@ -95,89 +264,27 @@ $env:TMP = $env:TEMP
 .\.venv\Scripts\python.exe -m pip check
 ```
 
-Install the PDF browser once after installing requirements:
+The tests use temporary SQLite databases and mocked providers. They cover
+onboarding persistence, migration safety, RSS/API ingestion behavior,
+recommendation learning and isolation, edition snapshots, saving, reading
+progress, PDF signatures, archive search, ownership, scheduling, timezone
+boundaries, DST resolution, duplicate claims, and bounded worker failures.
 
-```powershell
-.\.venv\Scripts\python.exe -m playwright install chromium
-```
+Offline GitHub Actions checks are defined in
+[.github/workflows/ci.yml](.github/workflows/ci.yml). CI does not require live
+news, TheNewsAPI credentials, a large embedding download, or Chromium.
 
-If PDF export reports that Chromium is unavailable, rerun that command. Generated
-PDFs are stored under ignored `generated/`; PDF export does not fetch remote images
-and falls back to text-only story content.
+## Known limitations
 
-Tests use temporary SQLite databases and test secrets, never the real application database or live news. See `BUILD_PROGRESS.md` for actual automated outcomes. For a manual check, run ingestion, complete setup, restart the app, select a reader, and open Today's Paper, Discover, and My Library. No browser or visual checks are part of the automated verification for the current phase.
+- Automatic worker execution requires the local computer and worker process to
+  remain running.
+- PDF bytes and route behavior are tested automatically; every PDF page still
+  requires manual visual inspection for final typography and layout review.
+- Real provider availability, content depth, and article quality vary by source.
+- The local prototype has no public hosting, account authentication, or
+  multi-device synchronization.
+- No automatic scheduling service, deployment automation, or cloud persistence
+  is included.
 
-## Phase 2 news ingestion
-
-Phase 2 adds a shared SQLite article cache, configurable RSS/Atom ingestion, optional
-TheNewsAPI `/v1/news/top` and `/v1/news/all` ingestion, canonical URL deduplication,
-content-depth classification, deterministic extractive text preparation, and optional
-local MiniLM embeddings. RSS works without an API key. The API key is read only from
-the server-side `THENEWSAPI_KEY` environment variable; `.env` is documentation only
-and is not loaded automatically.
-
-Fetch and prepare the pool manually:
-
-```powershell
-Set-Location -LiteralPath "C:\Users\J A\Desktop\Nascon 26'"
-.\.venv\Scripts\python.exe news.py
-```
-
-The command reports provider successes/errors, new and duplicate records, usable versus
-preview-only content, embedding reuse/creation, and the remaining local API allowance.
-The default feeds are in `news.py`; set `MYNEWS_RSS_FEEDS` to a JSON object to replace
-them. Article extraction is bounded to configured feed hosts, refuses private/local
-destinations, and does not bypass access controls. `full_text` needs substantial source
-text, `feed_text` uses a sufficiently detailed feed/API body, and `preview_only` is
-not sufficient for a future full newspaper edition.
-
-The embedding input is the title, deterministic brief, and up to 6,000 characters of
-deterministic detail. Sentence Transformers runs on CPU and caches vectors with the
-article content hash and `all-MiniLM-L6-v2` model identifier. If the model cannot be
-downloaded, ingestion remains usable for RSS/content checks but reports that neural
-embeddings are unavailable; this is not embedding acceptance.
-
-## Phase 3 adaptive recommendations
-
-Discover uses a persisted per-reader LinUCB policy with positive regularization.
-The versioned eight-value feature vector is:
-`explicit_match`, `learned_topic`, `recent_topic`, `semantic_match`,
-`freshness`, `significance`, `diversity`, and `exploration`.
-Scores use `theta = solve(A, b)` and `theta·x + 0.35 * sqrt(xᵀ A⁻¹ x)`;
-the implementation uses linear solves and never stores raw embedding-sized matrices.
-
-Reader memory stores topic weights, decayed recent weights, up to five positive
-semantic anchors, evidence counts, and explicit topic exclusions. Calibration
-stories seed cold-start topic/anchor signals when cached articles are available.
-Adjacent-topic exploration is bounded to a documented topic map and roughly one
-candidate in a ten-item result when a suitable candidate exists. Reasons identify
-the actual selected-interest, learned, recent, semantic, significance, or
-exploration evidence; deterministic selection has no fabricated propensity.
-
-Feedback rewards are `more +1.0`, `less -1.0`, `save +0.6`, active reading up to
-`+0.3`, source open `+0.1`, and skip `-0.1`. Explicit more/less is latest-event
-precedence; save and weaker signals are only used when no explicit rating exists.
-Event IDs are unique. Covariance is added once per recommendation, while later
-reward corrections adjust only `b` and reader memory. Unseen stories are not
-negative feedback.
-
-The editor can save explicit exclusions and reset learned weights, anchors,
-evidence, and policy state while retaining onboarding choices. Reader state,
-recommendations, and events are ownership-scoped and survive application restart.
-
-## Phase boundary and next integrations
-
-Phase 3 does not generate editions, export PDFs, or schedule work. It has article,
-learning, recommendation, and feedback tables, but no edition snapshots or PDF behavior.
-
-Phase 4 can reuse the taxonomy, profile preference document, database version mechanism,
-article pool, embeddings, and recommendation service. Do not treat recommendation
-signals as proven real-world quality; they demonstrate the mechanism only.
-
-Upcoming installation requirements, **not installed or required by this phase**:
-
-- Phase 2: verify/pin feedparser, requests, trafilatura, Sentence Transformers and its CPU runtime; download `sentence-transformers/all-MiniLM-L6-v2` once. Internet, model cache space, and sufficient RAM/CPU will be needed. Model inference/download compatibility has not been checked here. No custom neural training or paid API is required. Recheck optional TheNewsAPI limits/docs before integration; RSS must work without a key.
-- Phase 5: verify/pin Playwright, then run `.\.venv\Scripts\python.exe -m playwright install chromium` after installing that future dependency. Chromium is a separate download; PDFs will need local browser execution and a writable generated-files directory. This installation and PDF rendering have not been run here.
-- Phase 6: scheduling needs the local machine/worker running. Phase 1 only saves the desired timezone/time; it promises no automatic delivery. `tzdata` is already installed for Windows IANA timezone support.
-
-The local Git repository has been initialized for review; no commit, push, or GitHub remote was created. Review ignored/runtime files before adding files, configure your intended GitHub remote, and perform the requested commit/push yourself.
+Review ignored files, credentials, generated PDFs, model caches, and database
+files before staging. Do not commit secrets or runtime artifacts.
