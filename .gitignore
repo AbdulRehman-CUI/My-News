@@ -1,6 +1,7 @@
 .env
 .env.*
 !.env.example
+.vercel/
 .venv/
 venv/
 __pycache__/
@@ -8,6 +9,7 @@ __pycache__/
 .pytest_cache/
 .tmp/
 instance/
+*.key
 *.db
 *.db-*
 *.sqlite*

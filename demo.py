@@ -18,9 +18,10 @@ def seed(db):
             created.append(row[0])
             continue
         cursor = db.execute("""INSERT INTO readers(display_name, onboarding_complete, current_step, furthest_step)
-            VALUES (?, 1, 7, 7)""", (name,))
-        db.execute("INSERT INTO preferences(reader_id,data) VALUES (?,?)", (cursor.lastrowid, json.dumps(prefs)))
-        created.append(cursor.lastrowid)
+            VALUES (?, 1, 7, 7)""" + (" RETURNING id" if getattr(db, "is_postgres", False) else ""), (name,))
+        reader_id = cursor.fetchone()["id"] if getattr(db, "is_postgres", False) else cursor.lastrowid
+        db.execute("INSERT INTO preferences(reader_id,data) VALUES (?,?)", (reader_id, json.dumps(prefs)))
+        created.append(reader_id)
     db.commit()
     return created
 

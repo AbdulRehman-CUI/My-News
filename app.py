@@ -104,19 +104,29 @@ def save_choices(step, form, prefs, skip=False, confirm_schedule=True):
 
 def create_app(test_config=None):
     app = Flask(__name__, instance_path=str(ROOT / "instance"))
+    database_url = os.environ.get("DATABASE_URL")
+    configured_hosts = [host.strip() for host in os.environ.get("MYNEWS_ALLOWED_HOSTS", "").split(",") if host.strip()]
+    vercel_host = os.environ.get("VERCEL_URL", "").strip()
+    if vercel_host:
+        configured_hosts.append(vercel_host.removeprefix("https://").removeprefix("http://").rstrip("/"))
     app.config.from_mapping(
         DATABASE=str(ROOT / "instance" / "mynews.sqlite3"),
+        DATABASE_URL=database_url,
         SECRET_KEY=os.environ.get("MYNEWS_SECRET_KEY"),
         SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax",
-        SESSION_COOKIE_SECURE=False,  # Local HTTP only. Public hosting requires HTTPS/auth.
+        SESSION_COOKIE_SECURE=bool(database_url),
         PERMANENT_SESSION_LIFETIME=timedelta(days=30),
         MAX_CONTENT_LENGTH=32 * 1024,
-        TRUSTED_HOSTS=["localhost", "127.0.0.1", "[::1]"],
+        TRUSTED_HOSTS=["localhost", "127.0.0.1", "[::1]", ".vercel.app"] + configured_hosts,
+        DEPLOYMENT_MODE=bool(database_url),
     )
     if test_config:
         app.config.update(test_config)
-    Path(app.config["DATABASE"]).parent.mkdir(parents=True, exist_ok=True)
+    if not app.config.get("DATABASE_URL"):
+        Path(app.config["DATABASE"]).parent.mkdir(parents=True, exist_ok=True)
     if not app.config["SECRET_KEY"]:
+        if app.config.get("DATABASE_URL"):
+            raise RuntimeError("MYNEWS_SECRET_KEY is required when DATABASE_URL is configured.")
         secret_file = Path(app.instance_path) / "secret.key"
         try:
             with secret_file.open("x", encoding="utf-8") as secret:
@@ -195,19 +205,25 @@ def create_app(test_config=None):
             else:
                 db = get_db()
                 with db:
-                    cursor = db.execute("INSERT INTO readers(display_name) VALUES (?)", (name or "New reader",))
-                    reader_id = cursor.lastrowid
+                    if getattr(db, "is_postgres", False):
+                        cursor = db.execute("INSERT INTO readers(display_name) VALUES (?) RETURNING id", (name or "New reader",))
+                        reader_id = cursor.fetchone()["id"]
+                    else:
+                        cursor = db.execute("INSERT INTO readers(display_name) VALUES (?)", (name or "New reader",))
+                        reader_id = cursor.lastrowid
                     if not name:
                         db.execute("UPDATE readers SET display_name = ? WHERE id = ?", (f"Reader {reader_id}", reader_id))
                     db.execute("INSERT INTO preferences(reader_id, data) VALUES (?, ?)", (reader_id, json.dumps({"general_interest": True, "interests": [], "regions": ["Worldwide"]})))
                 session.clear()
                 session.update(reader_id=reader_id, csrf=secrets.token_urlsafe(32), _permanent=True)
                 return redirect(url_for("onboarding", step=0))
-        readers = get_db().execute("SELECT * FROM readers ORDER BY id").fetchall()
+        readers = [] if app.config.get("DEPLOYMENT_MODE") else get_db().execute("SELECT * FROM readers ORDER BY id").fetchall()
         return render_template("profiles.html", readers=readers, error=error), 400 if error else 200
 
     @app.post("/profiles/select")
     def select_profile():
+        if app.config.get("DEPLOYMENT_MODE"):
+            abort(403, description="Public profile selection is disabled. Use the signed session created for your reading profile.")
         selected = get_db().execute("SELECT * FROM readers WHERE id = ?", (request.form.get("profile_id"),)).fetchone()
         if selected is None:
             abort(404, description="That local profile could not be found.")
@@ -247,8 +263,8 @@ def create_app(test_config=None):
                 target = max(0, step - 1) if intent == "back" else min(7, step + 1)
                 if intent == "draft":
                     target = step
-                db.execute("UPDATE preferences SET data = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE reader_id = ?", (json.dumps(prefs), g.reader["id"]))
-                db.execute("UPDATE readers SET current_step = ?, furthest_step = max(furthest_step, ?), onboarding_complete = ? WHERE id = ?", (target, target, int(complete), g.reader["id"]))
+                db.execute("UPDATE preferences SET data = ?, updated_at = CURRENT_TIMESTAMP WHERE reader_id = ?", (json.dumps(prefs), g.reader["id"]))
+                db.execute("UPDATE readers SET current_step = ?, furthest_step = CASE WHEN furthest_step > ? THEN furthest_step ELSE ? END, onboarding_complete = ? WHERE id = ?", (target, target, target, int(complete), g.reader["id"]))
                 db.commit()
                 if intent == "draft":
                     return jsonify(saved=True)

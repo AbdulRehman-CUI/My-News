@@ -12,3 +12,4 @@ trafilatura==1.12.2
 numpy==2.2.3
 sentence-transformers==3.4.1
 playwright==1.51.0
+psycopg[binary]==3.2.3

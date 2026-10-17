@@ -1,5 +1,43 @@
 # MyNews build progress
 
+## Neon/Vercel deployment preparation — current
+
+Implemented deployment-compatible storage and application wiring:
+
+- `storage.py` now selects a psycopg PostgreSQL adapter when the server-side
+  `DATABASE_URL` is set and retains the existing SQLite path otherwise.
+- Neon initialization is repeatable and non-destructive, uses PostgreSQL JSONB,
+  timestamps, conflict handling, foreign keys, indexes, and a migration ledger.
+  The local SQLite file is never opened or modified in PostgreSQL mode.
+- Cross-database writes now use portable timestamps/conflict syntax, explicit
+  article columns, PostgreSQL `RETURNING id` where needed, and a normalized
+  dictionary-row adapter for JSON/date values.
+- `api/index.py` is a Vercel Flask entrypoint. Production requires
+  `MYNEWS_SECRET_KEY`, enables secure cookies, and applies trusted-host
+  configuration from `MYNEWS_ALLOWED_HOSTS`/`VERCEL_URL`.
+- Public deployments do not expose the local profile chooser or permit
+  unrestricted numeric profile selection. A newly created reader is bound to
+  its signed session. Full multi-device account authentication and importing
+  existing local profiles remain deployment gaps.
+- `.env.example` and `README.md` document Neon/Vercel variables, local-data
+  separation, ephemeral PDF/model storage, and the limitation that a persistent
+  local worker cannot run inside a standard Vercel function.
+- `tests/test_postgres.py` provides an optional Neon round-trip check and skips
+  without `DATABASE_URL`.
+
+Verification for this change:
+
+- `python -m unittest discover -s tests -v`: 30 passed, 1 skipped (PostgreSQL
+  integration skipped because no deployment connection string is configured).
+- Python compilation passed.
+- `pip check` passed.
+- `from api.index import app` passed with the local SQLite fallback.
+- No Neon/Vercel deployment credential was available, so live PostgreSQL schema,
+  serverless PDF/model packaging, Vercel routing, and deployed cookie/host
+  behavior were not run.
+- No browser, visual, live provider, or deployment checks were performed for
+  this deployment task.
+
 ## Phase 1 — completed, 17 October 2026
 
 Implemented only the application foundation, persistent local reader profiles, and choice-based onboarding. The complete `MYNEWS_PROJECT_REFERENCE.md` was read before editing and preserved. No existing application or Git history was present; no `AGENTS.md` was found in the workspace or checked ancestor locations. A local Git repository was initialized on `main` for review; no files were staged and no commit, push, or GitHub remote was created.

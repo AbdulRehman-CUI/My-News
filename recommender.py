@@ -93,7 +93,7 @@ def _save_state(db, reader_id, state):
         recent_weights=excluded.recent_weights, anchors=excluded.anchors, evidence=excluded.evidence,
         exclusions=excluded.exclusions, policy_a=excluded.policy_a, policy_b=excluded.policy_b,
         policy_version=excluded.policy_version, generation=excluded.generation,
-        updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')""",
+        updated_at=CURRENT_TIMESTAMP""",
         (reader_id, _json(state["topic_weights"]), _json(state["recent_weights"]),
          _json(state["anchors"]), _json(state["evidence"]), _json(state["exclusions"]),
          _json(state["policy_a"]), _json(state["policy_b"]), state["policy_version"], state["generation"]))
@@ -265,8 +265,9 @@ def record_feedback(db, reader_id, recommendation_id, event_id, event_type):
     rec = db.execute("SELECT * FROM recommendations WHERE id=? AND reader_id=?", (recommendation_id, reader_id)).fetchone()
     if rec is None:
         raise ValueError("That recommendation does not belong to this reader.")
-    inserted = db.execute("""INSERT OR IGNORE INTO feedback_events
-        (event_id, reader_id, recommendation_id, event_type) VALUES (?, ?, ?, ?)""",
+    inserted = db.execute("""INSERT INTO feedback_events
+        (event_id, reader_id, recommendation_id, event_type) VALUES (?, ?, ?, ?)
+        ON CONFLICT(event_id) DO NOTHING""",
         (event_id, reader_id, recommendation_id, event_type)).rowcount
     if not inserted:
         return False

@@ -151,6 +151,6 @@ def set_progress(db, reader_id, edition_id, item_id, completed):
         raise ValueError("That edition does not belong to this reader.")
     db.execute("""INSERT INTO reading_progress(reader_id, edition_id, item_id, completed)
         VALUES (?, ?, ?, ?) ON CONFLICT(reader_id, edition_id, item_id)
-        DO UPDATE SET completed=excluded.completed, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')""",
+        DO UPDATE SET completed=excluded.completed, updated_at=CURRENT_TIMESTAMP""",
         (reader_id, edition_id, item_id, int(bool(completed))))
     db.commit()

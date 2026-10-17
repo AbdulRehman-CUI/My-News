@@ -315,7 +315,11 @@ def _store_article(db, article, report, model):
     embedding, reused = prepare_embedding(article, model, existing["content_hash"] if existing else None)
     article["embedding"] = embedding if embedding is not None else (json.loads(existing["embedding"]) if existing and existing["embedding"] else None)
     article["embedding_model"] = MODEL_ID if article["embedding"] else None
-    db.execute("""INSERT INTO articles VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    db.execute("""INSERT INTO articles
+        (id, canonical_url, title, publisher, language, image_url, published_at, retrieved_at,
+         categories, topics, description, article_text, brief, detail, content_depth,
+         content_hash, story_group_id, embedding_model, embedding)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(canonical_url) DO UPDATE SET title=excluded.title, publisher=excluded.publisher,
         language=excluded.language, image_url=excluded.image_url, published_at=excluded.published_at,
         retrieved_at=excluded.retrieved_at, categories=excluded.categories, topics=excluded.topics,

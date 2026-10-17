@@ -13,12 +13,12 @@
       <button class="button primary" type="submit">Create a reading profile <span aria-hidden="true">↗</span></button>
     </form>
   </section>
-  <section class="panel"><span class="section-number">02 / PICK UP WHERE YOU LEFT OFF</span><h2>Your local profiles</h2>
+  <section class="panel"><span class="section-number">02 / PICK UP WHERE YOU LEFT OFF</span><h2>{{ 'Create a new reading space' if not readers else 'Your local profiles' }}</h2>
     {% if readers %}<ul class="profile-list">{% for profile in readers %}<li><form method="post" action="{{ url_for('select_profile') }}">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="profile_id" value="{{ profile.id }}">
       <button class="profile-option" type="submit"><span class="avatar" aria-hidden="true">{{ profile.display_name[0]|upper }}</span><span><strong>{{ profile.display_name }}</strong><small>{{ 'Setup complete' if profile.onboarding_complete else 'Continue setup · step ' ~ (profile.current_step + 1) ~ ' of 8' }}</small></span><span aria-hidden="true">→</span></button>
     </form></li>{% endfor %}</ul>{% else %}<div class="profile-empty"><span class="empty-symbol" aria-hidden="true">▤</span><p>No profiles here yet.</p><p class="quiet">Your reading space starts with the form beside you.</p></div>{% endif %}
   </section>
 </div>
-<p class="local-notice">Local prototype identity: anyone using this app on this computer can select any profile. This is not a private login.</p>
+<p class="local-notice">{% if readers %}Local prototype identity: anyone using this app on this computer can select any profile. This is not a private login.{% else %}This deployment creates a signed private session for each new reading space. Existing profiles are not publicly selectable.{% endif %}</p>
 {% endblock %}
