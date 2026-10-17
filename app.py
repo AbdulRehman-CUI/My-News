@@ -11,6 +11,7 @@ from flask import Flask, abort, g, jsonify, redirect, render_template, request, 
 from werkzeug.exceptions import SecurityError
 
 from storage import close_db, get_db, init_db, preferences
+from news import calibration_articles
 from taxonomy import ACTIVITIES, AGES, EDUCATION, REGIONS, STEPS, TOPICS
 
 ROOT = Path(__file__).resolve().parent
@@ -19,7 +20,17 @@ TIMEZONES = sorted(available_timezones() - {"localtime", "posixrules"})
 
 
 def calibration_candidates(prefs):
-    """Phase 2 can replace this source with cached, real article candidates."""
+    """Return cached real stories, with fictional examples only before ingestion."""
+    db = get_db()
+    rows = calibration_articles(db, prefs)
+    if rows:
+        return [
+            {"id": row["id"], "topic": json.loads(row["topics"])[0]["topic"],
+             "subtopic": json.loads(row["topics"])[0]["subtopics"][0],
+             "title": row["title"], "publisher": row["publisher"],
+             "published_at": row["published_at"], "real": True}
+            for row in rows
+        ]
     interests = prefs.get("interests", [])
     return [x for x in EXAMPLES if not interests or x["topic"] in interests][:6]
 

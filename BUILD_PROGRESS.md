@@ -73,6 +73,31 @@ Performed in the Codex in-app browser against a real server bound to `127.0.0.1:
 - Embedding model download/inference, live news ingestion, Chromium installation/PDF rendering, learning, edition generation, and scheduling: not run and not implemented, by the Phase 1 boundary. Future dependency compatibility and performance remain to be checked in their phases.
 - With JavaScript disabled, choices persist on form navigation rather than on change. `.env` files are not automatically loaded; README explains the environment variable or generated-secret options.
 
+## Phase 2 — news acquisition and content understanding
+
+Implemented:
+
+- Non-destructive schema migration from version 1 to version 2. Existing readers and preferences remain intact.
+- Shared SQLite article cache with canonical URL uniqueness, publication-date preservation (unknown remains `NULL`), normalized metadata, topic mapping, content hashes, story groups, and embedding fields.
+- Configurable RSS/Atom feeds with an RSS-only path and optional TheNewsAPI `/v1/news/top` and `/v1/news/all` support.
+- Finite HTTP timeout, one bounded retry, server-side API-key parameters, persisted hourly local API allowance, duplicate prevention, and redacted provider errors.
+- Bounded configured-host extraction using Trafilatura, private/local destination rejection, deterministic briefs/details, and `full_text`/`feed_text`/`preview_only` labels.
+- MiniLM embedding integration on CPU with content-hash/model reuse. The model is lazy-loaded by the ingestion command; failures are reported without pretending lexical content is neural.
+- Calibration now prefers cached real stories and displays publisher/date metadata. Fictional examples remain a fallback when the cache is empty, and onboarding does not perform live requests.
+- Manual command: `.\.venv\Scripts\python.exe news.py`.
+
+Verification:
+
+- `.\.venv\Scripts\python.exe -m unittest tests.test_foundation tests.test_news -q`: 14 tests passed.
+- Mocked checks cover migration/profile preservation, RSS-only ingestion, deduplication, unknown dates, depth classification, embedding-cache reuse, unsafe extraction rejection, and real cached calibration rendering.
+- Browser tools and visual checks were not used.
+
+Not run:
+
+- No live provider smoke check was performed because no API key was supplied and live crawling was not required for the focused offline verification.
+- The embedding model was not downloaded during tests; the mocked cache test verifies reuse, while the CLI reports model-download failures explicitly.
+- Phase 3 learning, recommendation ranking, editions, PDFs, and scheduling remain unimplemented.
+
 ### What Phase 2 can build on
 
 Use the existing taxonomy, session-selected profile ownership, validated persistent preferences, transaction/schema-version mechanism, and candidate-source function. Add real sourced article ingestion/cache/content preparation/embeddings in Phase 2, replacing fictional setup candidates with real cached headlines. Keep fictional examples out of live news and preserve the no-key path. Do not begin LinUCB/behavioral learning until Phase 3.

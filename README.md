@@ -76,9 +76,39 @@ $env:TMP = $env:TEMP
 
 Tests use temporary SQLite databases and test secrets, never the real application database or live news. See `BUILD_PROGRESS.md` for actual automated and browser outcomes. For a manual check, complete setup, refresh after saved drafts, go Back/Next, switch profiles, restart the app, and reopen My Editor. Repeat on a narrow viewport. Browser verification created local profiles named `Browser check` and `Reader 2`; they contain only setup choices, no fabricated news.
 
+## Phase 2 news ingestion
+
+Phase 2 adds a shared SQLite article cache, configurable RSS/Atom ingestion, optional
+TheNewsAPI `/v1/news/top` and `/v1/news/all` ingestion, canonical URL deduplication,
+content-depth classification, deterministic extractive text preparation, and optional
+local MiniLM embeddings. RSS works without an API key. The API key is read only from
+the server-side `THENEWSAPI_KEY` environment variable; `.env` is documentation only
+and is not loaded automatically.
+
+Fetch and prepare the pool manually:
+
+```powershell
+Set-Location -LiteralPath "C:\Users\J A\Desktop\Nascon 26'"
+.\.venv\Scripts\python.exe news.py
+```
+
+The command reports provider successes/errors, new and duplicate records, usable versus
+preview-only content, embedding reuse/creation, and the remaining local API allowance.
+The default feeds are in `news.py`; set `MYNEWS_RSS_FEEDS` to a JSON object to replace
+them. Article extraction is bounded to configured feed hosts, refuses private/local
+destinations, and does not bypass access controls. `full_text` needs substantial source
+text, `feed_text` uses a sufficiently detailed feed/API body, and `preview_only` is
+not sufficient for a future full newspaper edition.
+
+The embedding input is the title, deterministic brief, and up to 6,000 characters of
+deterministic detail. Sentence Transformers runs on CPU and caches vectors with the
+article content hash and `all-MiniLM-L6-v2` model identifier. If the model cannot be
+downloaded, ingestion remains usable for RSS/content checks but reports that neural
+embeddings are unavailable; this is not embedding acceptance.
+
 ## Phase boundary and next integrations
 
-Phase 1 does not fetch live news, calculate embeddings, run LinUCB or behavioral learning, generate editions, export PDFs, or schedule work. It has no article/edition/event tables and no inactive controls pretending those features work.
+Phase 2 does not run LinUCB or behavioral learning, generate editions, export PDFs, or schedule work. It has article cache and embedding tables, but no edition/event/recommendation behavior.
 
 Phase 2 can reuse the taxonomy, profile preference document, database version mechanism, and `calibration_candidates()` function. Replace the separately stored `setup_examples.json` candidates with cached real articles and migrate calibration references deliberately; never ingest fictional examples into a live news table. Optional age/education must not seed interests or expertise.
 
