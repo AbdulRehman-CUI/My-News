@@ -21,7 +21,7 @@ def close_db(_error=None):
 def init_db():
     db = get_db()
     version = db.execute("PRAGMA user_version").fetchone()[0]
-    if version > 2:
+    if version > 3:
         raise RuntimeError("This database needs a newer version of MyNews.")
     if version == 0:
         db.executescript("""
@@ -77,6 +77,51 @@ def init_db():
             );
             INSERT INTO news_usage(id, window_start) VALUES (1, strftime('%Y-%m-%dT%H:00:00Z','now'));
             PRAGMA user_version = 2;
+            COMMIT;
+        """)
+        version = 2
+    if version == 2:
+        db.executescript("""
+            BEGIN IMMEDIATE;
+            CREATE TABLE reader_learning (
+                reader_id INTEGER PRIMARY KEY REFERENCES readers(id) ON DELETE CASCADE,
+                topic_weights TEXT NOT NULL CHECK(json_valid(topic_weights)),
+                recent_weights TEXT NOT NULL CHECK(json_valid(recent_weights)),
+                anchors TEXT NOT NULL CHECK(json_valid(anchors)),
+                evidence TEXT NOT NULL CHECK(json_valid(evidence)),
+                exclusions TEXT NOT NULL CHECK(json_valid(exclusions)),
+                policy_a TEXT NOT NULL CHECK(json_valid(policy_a)),
+                policy_b TEXT NOT NULL CHECK(json_valid(policy_b)),
+                policy_version TEXT NOT NULL DEFAULT 'linucb-v1',
+                generation INTEGER NOT NULL DEFAULT 1,
+                updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+            );
+            CREATE TABLE recommendations (
+                id TEXT PRIMARY KEY,
+                reader_id INTEGER NOT NULL REFERENCES readers(id) ON DELETE CASCADE,
+                article_id TEXT NOT NULL REFERENCES articles(id) ON DELETE CASCADE,
+                surface TEXT NOT NULL CHECK(surface IN ('discover')),
+                position INTEGER NOT NULL,
+                features TEXT NOT NULL CHECK(json_valid(features)),
+                score REAL NOT NULL,
+                reason TEXT NOT NULL,
+                policy_version TEXT NOT NULL,
+                generation INTEGER NOT NULL,
+                visible INTEGER NOT NULL DEFAULT 0 CHECK(visible IN (0,1)),
+                effective_reward REAL,
+                covariance_applied INTEGER NOT NULL DEFAULT 0 CHECK(covariance_applied IN (0,1)),
+                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+            );
+            CREATE INDEX recommendations_reader_idx ON recommendations(reader_id, created_at);
+            CREATE TABLE feedback_events (
+                event_id TEXT PRIMARY KEY,
+                reader_id INTEGER NOT NULL REFERENCES readers(id) ON DELETE CASCADE,
+                recommendation_id TEXT NOT NULL REFERENCES recommendations(id) ON DELETE CASCADE,
+                event_type TEXT NOT NULL CHECK(event_type IN ('more','less','save','unsave','source_open','skip','active_read')),
+                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+            );
+            CREATE INDEX feedback_recommendation_idx ON feedback_events(recommendation_id);
+            PRAGMA user_version = 3;
             COMMIT;
         """)
 

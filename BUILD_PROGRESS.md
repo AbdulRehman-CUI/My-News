@@ -7,7 +7,7 @@ Implemented only the application foundation, persistent local reader profiles, a
 ### Completed behavior
 
 - Flask/Jinja application with system fonts, local static CSS, and a small vanilla JavaScript enhancement. No frontend build framework, external assets, Docker, or service layer.
-- Responsive navigation for Today's Paper, Discover, My Library, and My Editor. Empty pages accurately explain future capabilities. No invented articles, statistics, generation buttons, or inactive controls.
+- Responsive navigation for Today's Paper, Discover, My Library, and My Editor. Today's Paper and My Library remain honest pre-edition states; Discover and My Editor now use the Phase 3 learning loop without invented articles or statistics.
 - Optional/generated local profile names, selection through CSRF-protected POST, session-selected ownership, persistent profiles/completion/resume stage, separate preferences for each reader.
 - Eight onboarding stages with optional skips, visible progress, Back/Next, and clear single/multiple choice labels. Every one of the twelve categories has adaptive subtopics, maintained in `taxonomy.py`.
 - Regions include Worldwide and selectable countries/regions. Worldwide is exclusive; skipped/empty regions default to Worldwide.
@@ -16,7 +16,7 @@ Implemented only the application foundation, persistent local reader profiles, a
 - Optional age/education never infer interests or expertise. Skipped interests persist `general_interest: true`. Completion welcomes the reader and states that an edition has not been generated.
 - Draft autosave on choice changes, ordered so a stale draft does not overwrite a later navigation submission. Back/Next/Skip also persist without JavaScript. Refresh after the saved status appears; a network request interrupted before it finishes is not a committed save.
 - My Editor displays saved explicit choices and confirmed morning settings; setup can be reviewed through the existing wizard. Saving edits marks onboarding incomplete until the final confirmation is completed again.
-- Only two SQLite tables (`readers`, `preferences`), with foreign keys, checks, parameterized queries, transactions, and schema version 1 via `PRAGMA user_version`. No future article/edition/learning schema.
+- SQLite tables preserve `readers` and `preferences`, with Phase 2 article/cache tables and Phase 3 learning/recommendation/event tables added through non-destructive migrations. Foreign keys, checks, parameterized queries, transactions, and schema versioning remain enabled.
 - Random persistent ignored session secret, optional environment override, HttpOnly/SameSite cookies, CSRF on every POST, host validation, Jinja escaping, restrictive CSP and related headers. Submitted reader identifiers are rejected on preference updates. Local profile selection is intentionally not authentication.
 - `.gitignore`, placeholder-only `.env.example`, pinned installed dependencies, PowerShell setup/start/check instructions, future model/Chromium requirements, and the current limitations documented in `README.md`.
 
@@ -52,7 +52,7 @@ Performed in the Codex in-app browser against a real server bound to `127.0.0.1:
 - Complete setup for `Browser check`: age/education skipped; Studying + Freelancing; Technology + Sports; AI + Cricket; Pakistan; fictional Technology/AI calibration; confirmed Asia/Karachi / 08:15.
 - Refresh before advancing from interests retained both checked values. Back from subtopics and Next retained AI + Cricket. Morning drafts survived refresh and required a fresh confirmation.
 - A second profile was created without a name (`Reader 2`). Optional stages were skipped, including broad interests, subtopics, regions, and calibration; welcome acknowledged general interests and limited personalization. The profile chooser resumed its incomplete state before completion.
-- All four navigation links work; My Editor shows the correct selected reader's preferences, and Discover/Library accurately show empty states.
+- All four navigation links work; Discover shows prepared recommendations, and My Editor shows the selected reader's learning state and controls. Library remains an honest pre-edition state.
 - Stopped the Flask process, recreated/checked the local virtual environment, restarted the process, and refreshed the same browser session. The selected profile survived; both completed profiles remained selectable. Switching back to `Browser check` retained Technology/Sports and Asia/Karachi / 08:15.
 - Visually inspected profile creation, choice wizard, subtopics, welcome, and editor. Explicit viewport checks at 1365×900 and 390×844; mobile navigation, wrapping, controls, and selected states are usable. DOM bounds showed no horizontal overflow. Temporary viewport override was reset.
 - Saved screenshots in ignored `output/phase1-desktop.jpg` and `output/phase1-mobile.jpg`. Browser test profiles remain in the ignored runtime database; they contain no news data.
@@ -96,8 +96,32 @@ Not run:
 
 - No live provider smoke check was performed because no API key was supplied and live crawling was not required for the focused offline verification.
 - The embedding model was not downloaded during tests; the mocked cache test verifies reuse, while the CLI reports model-download failures explicitly.
-- Phase 3 learning, recommendation ranking, editions, PDFs, and scheduling remain unimplemented.
+- Phase 3 learning and recommendation ranking are implemented; editions, PDFs, and scheduling remain unimplemented.
 
 ### What Phase 2 can build on
 
-Use the existing taxonomy, session-selected profile ownership, validated persistent preferences, transaction/schema-version mechanism, and candidate-source function. Add real sourced article ingestion/cache/content preparation/embeddings in Phase 2, replacing fictional setup candidates with real cached headlines. Keep fictional examples out of live news and preserve the no-key path. Do not begin LinUCB/behavioral learning until Phase 3.
+Use the existing taxonomy, session-selected profile ownership, validated persistent preferences, transaction/schema-version mechanism, article cache, and embeddings. Phase 3 now consumes that prepared pool; Phase 4 should preserve recommendation evidence when creating immutable edition snapshots.
+
+## Phase 3 — adaptive recommendations and feedback learning
+
+Implemented:
+
+- Version-3 migration adding `reader_learning`, `recommendations`, and `feedback_events`.
+- Per-reader topic weights, decayed recent weights, positive semantic anchors, evidence counts, and explicit exclusions.
+- Deterministic retrieval across direct interests and a bounded adjacent-topic map. Duplicate story groups and preview-only records are excluded.
+- Persisted `linucb-v1` policy with positive identity regularization and an eight-value versioned feature vector: explicit match, learned topic, recent topic, semantic match, freshness, significance, diversity, and exploration.
+- Recommendation-time feature snapshots, policy metadata, explanations, and visible-impression records.
+- More/less, save/unsave, source-open, skip, and active-reading event support with unique event IDs, latest explicit-rating correction, one-time covariance updates, and reward-vector corrections.
+- Functional Discover and My Editor routes with ownership checks, exclusions, learned evidence, reset, and setup/schedule editing.
+
+Verification:
+
+- `.\.venv\Scripts\python.exe -m unittest tests.test_foundation tests.test_news tests.test_recommender -q`: 18 tests passed.
+- Fixtures cover cold start, score explanations, policy parameter changes, duplicate feedback, later reward correction, exclusions, reset, restart persistence, reader isolation, migration, and Discover rendering.
+- No browser or visual checks were performed.
+
+Known gaps:
+
+- Phase 4 must snapshot recommendations into dated editions; Discover currently creates fresh recommendation records per request.
+- Source-open and active-reading events are supported by the event endpoint but do not yet have reading-page instrumentation.
+- The policy is deterministic and exposes no selection propensity. Recommendation quality is not measured; fixtures demonstrate mechanism only.

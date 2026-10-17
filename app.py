@@ -12,6 +12,10 @@ from werkzeug.exceptions import SecurityError
 
 from storage import close_db, get_db, init_db, preferences
 from news import calibration_articles
+from recommender import (
+    learning_summary, mark_visible, recommend, record_feedback, reset_learning,
+    set_exclusions,
+)
 from taxonomy import ACTIVITIES, AGES, EDUCATION, REGIONS, STEPS, TOPICS
 
 ROOT = Path(__file__).resolve().parent
@@ -218,7 +222,10 @@ def create_app(test_config=None):
         if g.reader is None:
             return redirect(url_for("profiles"))
         prefs = preferences(g.reader["id"])
-        return render_template("shell.html", page=page, prefs=prefs)
+        recommendations = recommend(get_db(), g.reader["id"], prefs) if page == "discover" else []
+        learning = learning_summary(get_db(), g.reader["id"], prefs)
+        return render_template("shell.html", page=page, prefs=prefs,
+                               recommendations=recommendations, learning=learning)
 
     @app.get("/")
     def paper():
@@ -228,6 +235,27 @@ def create_app(test_config=None):
     def discover():
         return shell_page("discover")
 
+    @app.post("/discover/feedback")
+    def discover_feedback():
+        if g.reader is None:
+            return redirect(url_for("profiles"))
+        try:
+            record_feedback(
+                get_db(), g.reader["id"], request.form.get("recommendation_id", ""),
+                request.form.get("event_id", secrets.token_hex(16)),
+                request.form.get("event_type", ""),
+            )
+        except ValueError as exc:
+            abort(400, description=str(exc))
+        return redirect(url_for("discover"))
+
+    @app.post("/discover/visible")
+    def discover_visible():
+        if g.reader is None:
+            return redirect(url_for("profiles"))
+        mark_visible(get_db(), g.reader["id"], request.form.get("recommendation_id", ""))
+        return redirect(url_for("discover"))
+
     @app.get("/library")
     def library():
         return shell_page("library")
@@ -235,6 +263,20 @@ def create_app(test_config=None):
     @app.get("/editor")
     def editor():
         return shell_page("editor")
+
+    @app.post("/editor/exclusions")
+    def editor_exclusions():
+        if g.reader is None:
+            return redirect(url_for("profiles"))
+        set_exclusions(get_db(), g.reader["id"], request.form.getlist("exclusions"))
+        return redirect(url_for("editor"))
+
+    @app.post("/editor/reset-learning")
+    def editor_reset_learning():
+        if g.reader is None:
+            return redirect(url_for("profiles"))
+        reset_learning(get_db(), g.reader["id"])
+        return redirect(url_for("editor"))
 
     @app.errorhandler(400)
     @app.errorhandler(404)

@@ -1,6 +1,6 @@
-# MyNews — Phase 1
+# MyNews — Phase 3
 
-A local Flask application for persistent reader profiles and choice-based onboarding. Read [MYNEWS_PROJECT_REFERENCE.md](MYNEWS_PROJECT_REFERENCE.md) for the complete product plan. Only Phase 1 is implemented.
+A local Flask application for persistent reader profiles, real cached news, and adaptive Discover recommendations. Read [MYNEWS_PROJECT_REFERENCE.md](MYNEWS_PROJECT_REFERENCE.md) for the complete product plan. Phases 1–3 are implemented; daily editions and the archive are Phase 4.
 
 ## Run the application
 
@@ -11,7 +11,7 @@ Set-Location -LiteralPath "C:\Users\J A\Desktop\Nascon 26'"
 .\.venv\Scripts\python.exe app.py
 ```
 
-Open **http://127.0.0.1:5000**. Stop with Ctrl+C. Startup initializes the database automatically; no API key, model, browser download, or frontend build is needed. Debug mode is off and the server binds only to `127.0.0.1`.
+Open **http://127.0.0.1:5000**. Stop with Ctrl+C. Startup initializes the database automatically; no API key, model, browser download, or frontend build is needed just to start the app. Run the Phase 2 ingestion command once to populate cached news before opening Discover. Debug mode is off and the server binds only to `127.0.0.1`.
 
 ## Set up from scratch
 
@@ -49,11 +49,11 @@ The temporary-directory override works around a sandbox temp-directory permissio
 - Back, Next, and Skip save selections. JavaScript also saves draft changes, including valid morning settings. Wait for the saved message before refreshing; without JavaScript use Back/Next to persist changes.
 - Skipping broad interests records an explicit general-interest state; skipping regions records Worldwide. Worldwide must be selected alone or replaced with specific regions.
 - Browser timezone is a suggestion only. Confirmation is always required to finish, including after resuming a draft. An IANA identifier and strict `HH:MM` local time are validated server-side.
-- Today's Paper, Discover, My Library, and My Editor load with honest Phase 1 states. My Editor summarizes explicit preferences and links back to the working setup flow. Editing a setup choice marks setup incomplete until morning confirmation is completed again.
+- Today's Paper and My Library remain honest pre-edition states. Discover now shows cached recommendations with source links, reasons, and feedback. My Editor shows explicit choices, learned evidence, exclusions, reset, and setup links. Editing a setup choice marks setup incomplete until morning confirmation is completed again.
 
 ## Persistence and local identity
 
-SQLite is stored at ignored `instance/mynews.sqlite3`. The schema has only `readers` and `preferences`: reader creation time, completion/current/furthest stage, and a validated JSON preference document. `PRAGMA user_version = 1` initializes the schema; a newer database version fails explicitly. Foreign keys, checks, parameterized queries, and transactions protect writes. Onboarding writes take an immediate transaction before reading and updating preferences.
+SQLite is stored at ignored `instance/mynews.sqlite3`. The schema preserves `readers` and `preferences` and now adds the Phase 2 article cache plus Phase 3 learning, recommendation, and feedback tables. Schema migrations are tracked through `PRAGMA user_version`; a newer database version fails explicitly. Foreign keys, checks, parameterized queries, and transactions protect writes. Onboarding writes take an immediate transaction before reading and updating preferences.
 
 Preferences include `age`, `education`, `activities`, `interests`, `general_interest`, `subtopics` (`Topic:Subtopic` values), `regions`, `calibration` (setup IDs), `calibration_preferences` (topic/subtopic snapshots), `timezone`, `morning_time`, and `schedule_confirmed`. Missing optional draft fields mean the stage has not yet been saved. Skips save explicit empty/default values.
 
@@ -74,7 +74,7 @@ $env:TMP = $env:TEMP
 .\.venv\Scripts\python.exe -m pip check
 ```
 
-Tests use temporary SQLite databases and test secrets, never the real application database or live news. See `BUILD_PROGRESS.md` for actual automated and browser outcomes. For a manual check, complete setup, refresh after saved drafts, go Back/Next, switch profiles, restart the app, and reopen My Editor. Repeat on a narrow viewport. Browser verification created local profiles named `Browser check` and `Reader 2`; they contain only setup choices, no fabricated news.
+Tests use temporary SQLite databases and test secrets, never the real application database or live news. See `BUILD_PROGRESS.md` for actual automated outcomes. For a manual check, run ingestion, complete setup, restart the app, select a reader, and open Discover. Today's Paper and My Library remain empty until Phase 4 creates dated editions and an archive.
 
 ## Phase 2 news ingestion
 
@@ -106,11 +106,42 @@ article content hash and `all-MiniLM-L6-v2` model identifier. If the model canno
 downloaded, ingestion remains usable for RSS/content checks but reports that neural
 embeddings are unavailable; this is not embedding acceptance.
 
+## Phase 3 adaptive recommendations
+
+Discover uses a persisted per-reader LinUCB policy with positive regularization.
+The versioned eight-value feature vector is:
+`explicit_match`, `learned_topic`, `recent_topic`, `semantic_match`,
+`freshness`, `significance`, `diversity`, and `exploration`.
+Scores use `theta = solve(A, b)` and `theta·x + 0.35 * sqrt(xᵀ A⁻¹ x)`;
+the implementation uses linear solves and never stores raw embedding-sized matrices.
+
+Reader memory stores topic weights, decayed recent weights, up to five positive
+semantic anchors, evidence counts, and explicit topic exclusions. Calibration
+stories seed cold-start topic/anchor signals when cached articles are available.
+Adjacent-topic exploration is bounded to a documented topic map and roughly one
+candidate in a ten-item result when a suitable candidate exists. Reasons identify
+the actual selected-interest, learned, recent, semantic, significance, or
+exploration evidence; deterministic selection has no fabricated propensity.
+
+Feedback rewards are `more +1.0`, `less -1.0`, `save +0.6`, active reading up to
+`+0.3`, source open `+0.1`, and skip `-0.1`. Explicit more/less is latest-event
+precedence; save and weaker signals are only used when no explicit rating exists.
+Event IDs are unique. Covariance is added once per recommendation, while later
+reward corrections adjust only `b` and reader memory. Unseen stories are not
+negative feedback.
+
+The editor can save explicit exclusions and reset learned weights, anchors,
+evidence, and policy state while retaining onboarding choices. Reader state,
+recommendations, and events are ownership-scoped and survive application restart.
+
 ## Phase boundary and next integrations
 
-Phase 2 does not run LinUCB or behavioral learning, generate editions, export PDFs, or schedule work. It has article cache and embedding tables, but no edition/event/recommendation behavior.
+Phase 3 does not generate editions, export PDFs, or schedule work. It has article,
+learning, recommendation, and feedback tables, but no edition snapshots or PDF behavior.
 
-Phase 2 can reuse the taxonomy, profile preference document, database version mechanism, and `calibration_candidates()` function. Replace the separately stored `setup_examples.json` candidates with cached real articles and migrate calibration references deliberately; never ingest fictional examples into a live news table. Optional age/education must not seed interests or expertise.
+Phase 4 can reuse the taxonomy, profile preference document, database version mechanism,
+article pool, embeddings, and recommendation service. Do not treat recommendation
+signals as proven real-world quality; they demonstrate the mechanism only.
 
 Upcoming installation requirements, **not installed or required by this phase**:
 
