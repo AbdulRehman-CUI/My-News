@@ -150,14 +150,14 @@ def _feed_entries(content):
         raise RuntimeError("feedparser is not installed")
 
 
-def _article_from_entry(entry, feed_topics):
+def _article_from_entry(entry, feed_topics, fetch_full_text=True):
     link = safe_public_url(entry.get("link", ""))
     if not link:
         return None
     title = clean_text(entry.get("title", ""))
     description = clean_text(entry.get("summary", entry.get("description", "")))
     text = clean_text(entry.get("content", [{}])[0].get("value", "") if entry.get("content") else "")
-    if not text and link:
+    if not text and link and fetch_full_text:
         text = extract_permitted_text(link)
     topics = topic_matches(title, description, feed_topics)
     content = text or description
@@ -245,7 +245,8 @@ def _count_api(db):
     db.execute("UPDATE news_usage SET requests_used = requests_used + 1 WHERE id = 1")
 
 
-def ingest(db, session=None, feeds=None, api_key=None, model=None, api_limit=80):
+def ingest(db, session=None, feeds=None, api_key=None, model=None, api_limit=80,
+           max_entries_per_feed=20, fetch_full_text=True):
     import requests
     session = session or requests.Session()
     report = IngestReport()
@@ -259,8 +260,8 @@ def ingest(db, session=None, feeds=None, api_key=None, model=None, api_limit=80)
         except RuntimeError as exc:
             report.errors.append(str(exc))
             continue
-        for entry in entries[:20]:
-            article = _article_from_entry(entry, topics)
+        for entry in entries[:max_entries_per_feed]:
+            article = _article_from_entry(entry, topics, fetch_full_text=fetch_full_text)
             if article:
                 _store_article(db, article, report, model)
     if api_key and _api_allowed(db, api_limit):

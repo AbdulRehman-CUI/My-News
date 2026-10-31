@@ -53,7 +53,19 @@ def generate_edition(db, reader_id, prefs, now=None, limit=10):
         (reader_id, local_date),
     ).fetchone()
     if existing:
-        return existing
+        if existing["status"] != "empty":
+            return existing
+        # Empty editions are recoverable when the shared article pool is populated.
+        available = db.execute(
+            "SELECT 1 FROM articles WHERE content_depth != 'preview_only' LIMIT 1"
+        ).fetchone()
+        if not available:
+            return existing
+        db.execute(
+            "DELETE FROM editions WHERE id=? AND reader_id=? AND status='empty'",
+            (existing["id"], reader_id),
+        )
+        db.commit()
     generated_at = (now or _utc_now()).astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
     recommendations = recommend(db, reader_id, prefs, surface="discover", limit=limit)
     status = "ready" if recommendations else "empty"
@@ -62,7 +74,8 @@ def generate_edition(db, reader_id, prefs, now=None, limit=10):
     edition_id = uuid.uuid4().hex
     policy_version = recommendations[0]["policy_version"] if recommendations else "linucb-v1"
     try:
-        db.execute("BEGIN IMMEDIATE")
+        if not getattr(db, "is_postgres", False):
+            db.execute("BEGIN IMMEDIATE")
         db.execute("""INSERT INTO editions
             (id, reader_id, local_date, timezone, scheduled_time, generated_at, cutoff_at,
              status, profile_snapshot, policy_version)

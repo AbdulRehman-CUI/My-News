@@ -138,6 +138,40 @@ def create_app(test_config=None):
     with app.app_context():
         init_db()
 
+    @app.get("/api/cron/ingest")
+    def cron_ingest():
+        """Bounded, authenticated, serverless-compatible RSS refresh."""
+        configured_secret = os.environ.get("CRON_SECRET", "")
+        supplied = request.headers.get("Authorization", "")
+        if not configured_secret or not secrets.compare_digest(supplied, f"Bearer {configured_secret}"):
+            return jsonify({"error": "unauthorized"}), 401
+        if not app.config.get("DATABASE_URL"):
+            return jsonify({"error": "persistent_database_required"}), 503
+
+        from news import ingest
+        try:
+            db = get_db()
+            report = ingest(
+                db, model=None, api_key=None,
+                max_entries_per_feed=8, fetch_full_text=False,
+            )
+            eligible = db.execute(
+                "SELECT COUNT(*) AS count FROM articles WHERE content_depth != 'preview_only'"
+            ).fetchone()["count"]
+            return jsonify({
+                "attempted_sources": report.attempted,
+                "successful_sources": report.successful,
+                "new_articles": report.new,
+                "duplicates": report.duplicate,
+                "usable": report.usable,
+                "preview_only": report.preview_only,
+                "eligible_articles": eligible,
+                "errors": [str(error)[:180] for error in report.errors[:5]],
+            }), (200 if report.successful else 503)
+        except Exception:
+            app.logger.exception("Scheduled news ingestion failed")
+            return jsonify({"error": "ingestion_failed"}), 500
+
     @app.template_filter("reader_date")
     def reader_date(value, timezone_name="UTC", date_only=False):
         """Screen-only formatting; leave stored snapshots and PDF output intact."""
@@ -292,7 +326,7 @@ def create_app(test_config=None):
         editions = []
         if page == "paper" and g.reader["onboarding_complete"]:
             edition = get_today(get_db(), g.reader["id"], prefs.get("timezone", "UTC"))
-            if edition is None:
+            if edition is None or edition["status"] == "empty":
                 edition = generate_edition(get_db(), g.reader["id"], prefs)
             items = edition_items(get_db(), edition["id"], g.reader["id"])
         if page == "library":
