@@ -74,7 +74,8 @@ def generate_edition(db, reader_id, prefs, now=None, limit=10):
     edition_id = uuid.uuid4().hex
     policy_version = recommendations[0]["policy_version"] if recommendations else "linucb-v1"
     try:
-        db.execute("BEGIN IMMEDIATE")
+        if not getattr(db, "is_postgres", False):
+            db.execute("BEGIN IMMEDIATE")
         db.execute("""INSERT INTO editions
             (id, reader_id, local_date, timezone, scheduled_time, generated_at, cutoff_at,
              status, profile_snapshot, policy_version)
