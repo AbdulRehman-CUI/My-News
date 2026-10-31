@@ -326,7 +326,7 @@ def create_app(test_config=None):
         editions = []
         if page == "paper" and g.reader["onboarding_complete"]:
             edition = get_today(get_db(), g.reader["id"], prefs.get("timezone", "UTC"))
-            if edition is None:
+            if edition is None or edition["status"] == "empty":
                 edition = generate_edition(get_db(), g.reader["id"], prefs)
             items = edition_items(get_db(), edition["id"], g.reader["id"])
         if page == "library":
