@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 from flask import render_template
 
@@ -111,3 +112,15 @@ class EditionTests(unittest.TestCase):
         self.assertEqual(client.get("/library").status_code, 200)
         edition_id = self.db.execute("SELECT id FROM editions ORDER BY generated_at DESC LIMIT 1").fetchone()[0]
         self.assertEqual(client.get(f"/editions/{edition_id}").status_code, 200)
+
+    def test_download_survives_read_only_cache_and_preserves_attachment_headers(self):
+        edition = generate_edition(self.db, 1, self.prefs, limit=3)
+        client = self.app.test_client()
+        with client.session_transaction() as state:
+            state["reader_id"] = 1
+        with patch("pdf_export.cached_pdf_path", side_effect=OSError(30, "Read-only file system")), patch.dict("sys.modules", {"playwright.sync_api": None}):
+            response = client.get(f"/editions/{edition['id']}/pdf")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.mimetype, "application/pdf")
+        self.assertIn("attachment;", response.headers["Content-Disposition"])
+        self.assertTrue(response.data.startswith(b"%PDF-"))

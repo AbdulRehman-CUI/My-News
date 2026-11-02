@@ -1,5 +1,7 @@
 """PDF export from immutable edition snapshots."""
 from pathlib import Path
+import os
+import tempfile
 from flask import render_template
 
 
@@ -60,15 +62,23 @@ def pdf_revision(edition):
 
 
 def cached_pdf_path(root, edition):
-    cache = Path(root) / "generated"
+    cache = (Path(tempfile.gettempdir()) / "mynews-pdfs"
+             if os.environ.get("VERCEL") else Path(root) / "generated")
     cache.mkdir(parents=True, exist_ok=True)
     return cache / f"{edition['id']}-{pdf_revision(edition)}.pdf"
 
 
 def export_pdf(root, edition, items):
-    path = cached_pdf_path(root, edition)
-    if path.is_file() and path.stat().st_size:
-        return path.read_bytes(), True
+    # A cache is optional: immutable edition snapshots can always be rendered again.
+    path = None
+    try:
+        path = cached_pdf_path(root, edition)
+        if path.is_file():
+            cached = path.read_bytes()
+            if cached:
+                return cached, True
+    except OSError:
+        path = None
     try:
         from playwright.sync_api import sync_playwright
         html = render_template("newspaper.html", edition=edition, items=items)
@@ -85,5 +95,20 @@ def export_pdf(root, edition, items):
             browser.close()
     except Exception:
         payload = _fallback_pdf(edition, items)
-    path.write_bytes(payload)
+    if path is not None:
+        temporary = None
+        try:
+            # Readers must never see a partially written PDF from another request.
+            with tempfile.NamedTemporaryFile(dir=path.parent, suffix=".pdf", delete=False) as output:
+                temporary = Path(output.name)
+                output.write(payload)
+            temporary.replace(path)
+        except OSError:
+            pass  # Disk/cache failures must not discard the in-memory download.
+        finally:
+            if temporary is not None:
+                try:
+                    temporary.unlink(missing_ok=True)
+                except OSError:
+                    pass
     return payload, False
