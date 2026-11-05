@@ -83,7 +83,8 @@ class EditionTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Story 0", response.data)
         self.assertIn(first["local_date"].encode(), response.data)
-        pdf = client.get(f"/editions/{first['id']}/pdf")
+        with patch("app.export_pdf", return_value=(b"%PDF-test-double", False)):
+            pdf = client.get(f"/editions/{first['id']}/pdf")
         self.assertEqual(pdf.status_code, 200)
         self.assertEqual(pdf.mimetype, "application/pdf")
         self.assertTrue(pdf.data.startswith(b"%PDF-"))

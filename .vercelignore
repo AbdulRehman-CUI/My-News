@@ -1,0 +1,9 @@
+.venv/
+.tmp/
+.cache/
+models/
+generated/
+instance/
+tests/
+__pycache__/
+*.pyc

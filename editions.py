@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 from recommender import recommend
+from storage import reader_write
 
 READING_WORDS_PER_MINUTE = 220
 
@@ -45,6 +46,7 @@ def get_today(db, reader_id, timezone_name, now=None):
     ).fetchone()
 
 
+@reader_write
 def generate_edition(db, reader_id, prefs, now=None, limit=10):
     timezone_name = prefs.get("timezone") or "UTC"
     local_date = _date_for(timezone_name, now)
@@ -71,38 +73,26 @@ def generate_edition(db, reader_id, prefs, now=None, limit=10):
     status = "ready" if recommendations else "empty"
     if recommendations and sum(len(item["article"]["brief"] or "") for item in recommendations) < 1200:
         status = "short"
-    edition_id = uuid.uuid4().hex
+    # Keep legacy empty edition IDs so ownership and any references remain stable.
+    edition_id = existing["id"] if existing else uuid.uuid4().hex
     policy_version = recommendations[0]["policy_version"] if recommendations else "linucb-v1"
-    try:
-        if not getattr(db, "is_postgres", False):
-            db.execute("BEGIN IMMEDIATE")
-        db.execute("""INSERT INTO editions
-            (id, reader_id, local_date, timezone, scheduled_time, generated_at, cutoff_at,
-             status, profile_snapshot, policy_version)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (edition_id, reader_id, local_date, timezone_name, prefs.get("morning_time", "07:00"),
-             generated_at, generated_at, status, json.dumps(_profile_snapshot(prefs)), policy_version))
-        for position, item in enumerate(recommendations, 1):
-            article = item["article"]
-            brief = article["brief"] or article["description"] or "Source material is limited."
-            detail = article["detail"] or brief
-            db.execute("""INSERT INTO edition_items
+    db.execute("""INSERT INTO editions
+        (id, reader_id, local_date, timezone, scheduled_time, generated_at, cutoff_at,
+         status, profile_snapshot, policy_version)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (edition_id, reader_id, local_date, timezone_name, prefs.get("morning_time", "07:00"),
+         generated_at, generated_at, status, json.dumps(_profile_snapshot(prefs)), policy_version))
+    for position, item in enumerate(recommendations, 1):
+        article = item["article"]
+        brief = article["brief"] or article["description"] or "Source material is limited."
+        detail = article["detail"] or brief
+        db.execute("""INSERT INTO edition_items
                 (edition_id, position, section, article_id, recommendation_id, title, publisher,
                  canonical_url, published_at, image_url, brief, detail, takeaway, reason, word_count)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (edition_id, position, _section(article), article["id"], item["id"], article["title"],
                  article["publisher"], article["canonical_url"], article["published_at"], article["image_url"], brief, detail,
                  _takeaway(brief), item["reason"], len(brief.split())))
-        db.commit()
-    except Exception:
-        db.rollback()
-        existing = db.execute(
-            "SELECT * FROM editions WHERE reader_id=? AND local_date=?",
-            (reader_id, local_date),
-        ).fetchone()
-        if existing:
-            return existing
-        raise
     return db.execute("SELECT * FROM editions WHERE id=?", (edition_id,)).fetchone()
 
 
@@ -123,7 +113,7 @@ def archive(db, reader_id, query=""):
         pattern = f"%{query}%"
         return db.execute("""SELECT DISTINCT e.* FROM editions e
             LEFT JOIN edition_items ei ON ei.edition_id=e.id
-            WHERE e.reader_id=? AND (e.local_date LIKE ? OR ei.title LIKE ? OR ei.brief LIKE ?)
+            WHERE e.reader_id=? AND (CAST(e.local_date AS TEXT) LIKE ? OR ei.title LIKE ? OR ei.brief LIKE ?)
             ORDER BY e.local_date DESC""", (reader_id, pattern, pattern, pattern)).fetchall()
     return db.execute("SELECT * FROM editions WHERE reader_id=? ORDER BY local_date DESC", (reader_id,)).fetchall()
 
@@ -149,21 +139,27 @@ def saved_stories(db, reader_id, query=""):
         WHERE ss.reader_id=? ORDER BY ss.saved_at DESC""", (reader_id,)).fetchall()
 
 
+@reader_write
 def set_saved(db, reader_id, article_id, edition_id, saved):
+    owner = db.execute("""SELECT 1 FROM edition_items ei JOIN editions e ON e.id=ei.edition_id
+        WHERE e.id=? AND e.reader_id=? AND ei.article_id=?""", (edition_id, reader_id, article_id)).fetchone()
+    if not owner:
+        raise ValueError("That story does not belong to this reader's edition.")
     if saved:
-        db.execute("INSERT OR REPLACE INTO saved_stories(reader_id, article_id, edition_id) VALUES (?, ?, ?)",
+        db.execute("""INSERT INTO saved_stories(reader_id, article_id, edition_id) VALUES (?, ?, ?)
+            ON CONFLICT(reader_id, article_id) DO UPDATE SET edition_id=excluded.edition_id""",
                    (reader_id, article_id, edition_id))
     else:
         db.execute("DELETE FROM saved_stories WHERE reader_id=? AND article_id=?", (reader_id, article_id))
-    db.commit()
 
 
+@reader_write
 def set_progress(db, reader_id, edition_id, item_id, completed):
-    owner = db.execute("SELECT 1 FROM editions WHERE id=? AND reader_id=?", (edition_id, reader_id)).fetchone()
+    owner = db.execute("""SELECT 1 FROM editions e JOIN edition_items ei ON ei.edition_id=e.id
+        WHERE e.id=? AND e.reader_id=? AND ei.id=?""", (edition_id, reader_id, item_id)).fetchone()
     if not owner:
         raise ValueError("That edition does not belong to this reader.")
     db.execute("""INSERT INTO reading_progress(reader_id, edition_id, item_id, completed)
         VALUES (?, ?, ?, ?) ON CONFLICT(reader_id, edition_id, item_id)
         DO UPDATE SET completed=excluded.completed, updated_at=CURRENT_TIMESTAMP""",
         (reader_id, edition_id, item_id, int(bool(completed))))
-    db.commit()

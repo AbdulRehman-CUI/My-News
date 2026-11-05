@@ -3,6 +3,7 @@ import json
 import os
 import re
 import secrets
+from dataclasses import asdict
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError, available_timezones
@@ -11,7 +12,7 @@ from flask import Flask, abort, g, jsonify, redirect, render_template, request, 
 from werkzeug.exceptions import SecurityError
 
 from storage import close_db, get_db, init_db, preferences
-from news import calibration_articles
+from news import article_counts, calibration_articles, ingest, ingestion_diagnostics
 from recommender import (
     learning_summary, mark_visible, recommend, record_feedback, reset_learning,
     set_exclusions,
@@ -119,6 +120,7 @@ def create_app(test_config=None):
         MAX_CONTENT_LENGTH=32 * 1024,
         TRUSTED_HOSTS=["localhost", "127.0.0.1", "[::1]", ".vercel.app"] + configured_hosts,
         DEPLOYMENT_MODE=bool(database_url),
+        CRON_SECRET=os.environ.get("CRON_SECRET"),
     )
     if test_config:
         app.config.update(test_config)
@@ -141,33 +143,19 @@ def create_app(test_config=None):
     @app.get("/api/cron/ingest")
     def cron_ingest():
         """Bounded, authenticated, serverless-compatible RSS refresh."""
-        configured_secret = os.environ.get("CRON_SECRET", "")
+        configured_secret = app.config.get("CRON_SECRET") or ""
         supplied = request.headers.get("Authorization", "")
         if not configured_secret or not secrets.compare_digest(supplied, f"Bearer {configured_secret}"):
             return jsonify({"error": "unauthorized"}), 401
-        if not app.config.get("DATABASE_URL"):
-            return jsonify({"error": "persistent_database_required"}), 503
 
-        from news import ingest
         try:
             db = get_db()
-            report = ingest(
-                db, model=None, api_key=None,
-                max_entries_per_feed=8, fetch_full_text=False,
-            )
-            eligible = db.execute(
-                "SELECT COUNT(*) AS count FROM articles WHERE content_depth != 'preview_only'"
-            ).fetchone()["count"]
-            return jsonify({
-                "attempted_sources": report.attempted,
-                "successful_sources": report.successful,
-                "new_articles": report.new,
-                "duplicates": report.duplicate,
-                "usable": report.usable,
-                "preview_only": report.preview_only,
-                "eligible_articles": eligible,
-                "errors": [str(error)[:180] for error in report.errors[:5]],
-            }), (200 if report.successful else 503)
+            report = ingest(db, api_key=os.environ.get("THENEWSAPI_KEY"), model=None)
+            payload = asdict(report)
+            payload.update(attempted_sources=report.attempted, successful_sources=report.successful,
+                           new_articles=report.new, duplicates=report.duplicate,
+                           usable_articles=report.usable, preview_only_articles=report.preview_only)
+            return jsonify(payload), (503 if report.status == "failed" else 200)
         except Exception:
             app.logger.exception("Scheduled news ingestion failed")
             return jsonify({"error": "ingestion_failed"}), 500
@@ -209,6 +197,15 @@ def create_app(test_config=None):
 
     @app.before_request
     def prepare_request():
+        if request.endpoint in ("cron_ingest", "ingestion_status"):
+            secret = app.config.get("CRON_SECRET")
+            authorization = request.headers.get("Authorization", "")
+            if not secret or not secrets.compare_digest(authorization.encode(), f"Bearer {secret}".encode()):
+                return jsonify(error="Unauthorized"), 401
+            if request.method != "GET":
+                return jsonify(error="Use GET"), 405
+            g.reader = None
+            return None
         session.setdefault("csrf", secrets.token_urlsafe(32))
         if request.method == "POST":
             token = request.form.get("csrf_token", "")
@@ -224,6 +221,26 @@ def create_app(test_config=None):
         response.headers["Referrer-Policy"] = "same-origin"
         response.headers["Cache-Control"] = "no-store"
         return response
+
+    @app.get("/api/admin/ingestion")
+    def ingestion_status():
+        try:
+            diagnostics = ingestion_diagnostics(get_db())
+        except Exception:
+            return jsonify(database_connected=False, error="Diagnostics unavailable."), 503
+        try:
+            configuration = json.loads((ROOT / "vercel.json").read_text(encoding="utf-8"))
+            definition = any(job.get("path") == "/api/cron/ingest" for job in configuration.get("crons", []))
+        except (OSError, ValueError):
+            definition = False
+        diagnostics.update(
+            scheduled_ingestion_configured=bool(definition and app.config.get("CRON_SECRET")
+                                                 and os.environ.get("VERCEL_ENV") == "production"),
+            scheduler_definition_present=definition,
+            scheduler_execution_verified=False,
+            embedding_model_available=False, embedding_mode="topic_features",
+        )
+        return jsonify(diagnostics)
 
     @app.context_processor
     def template_context():
@@ -326,16 +343,31 @@ def create_app(test_config=None):
         editions = []
         if page == "paper" and g.reader["onboarding_complete"]:
             edition = get_today(get_db(), g.reader["id"], prefs.get("timezone", "UTC"))
-            if edition is None or edition["status"] == "empty":
+            if edition is None or edition["status"] in ("empty", "failed"):
                 edition = generate_edition(get_db(), g.reader["id"], prefs)
             items = edition_items(get_db(), edition["id"], g.reader["id"])
         if page == "library":
             query = request.args.get("q", "")
             editions = archive(get_db(), g.reader["id"], query)
         saved = saved_stories(get_db(), g.reader["id"], request.args.get("q", "")) if page == "library" else []
-        return render_template("shell.html", page=page, prefs=prefs,
+        saved_article_ids = {row["article_id"] for row in get_db().execute(
+            "SELECT article_id FROM saved_stories WHERE reader_id=?", (g.reader["id"],)
+        ).fetchall()} if page == "discover" else set()
+        empty_message = None
+        if (page == "discover" and not recommendations) or (page == "paper" and not items):
+            counts = article_counts(get_db())
+            if not g.reader["onboarding_complete"] and page == "paper":
+                empty_message = "Complete your reading profile to prepare your first paper."
+            elif counts["articles"] == 0:
+                empty_message = "News has not arrived yet. Please check back after the next news update."
+            elif counts["eligible"] == 0:
+                empty_message = "The available reports contain only short previews. Please check back for readable stories."
+            else:
+                empty_message = "No stories match your current interests and exclusions. You can review your choices in My Editor."
+        return render_template("shell.html", page=page, prefs=prefs, empty_message=empty_message,
                                recommendations=recommendations, learning=learning,
                                edition=edition, items=items, editions=editions, saved=saved,
+                               saved_article_ids=saved_article_ids,
                                library_query=request.args.get("q", ""))
 
     @app.get("/")
@@ -351,11 +383,24 @@ def create_app(test_config=None):
         if g.reader is None:
             return redirect(url_for("profiles"))
         try:
-            record_feedback(
+            recorded = record_feedback(
                 get_db(), g.reader["id"], request.form.get("recommendation_id", ""),
                 request.form.get("event_id", secrets.token_hex(16)),
                 request.form.get("event_type", ""),
             )
+            # Discover saves use the same library as edition saves, without an edition snapshot.
+            event_type = request.form.get("event_type")
+            if recorded and event_type in ("save", "unsave"):
+                db = get_db()
+                recommendation = db.execute("SELECT article_id FROM recommendations WHERE id=? AND reader_id=?",
+                                            (request.form.get("recommendation_id"), g.reader["id"])).fetchone()
+                with db:
+                    if event_type == "save":
+                        db.execute("INSERT INTO saved_stories(reader_id,article_id) VALUES (?,?) ON CONFLICT(reader_id,article_id) DO NOTHING",
+                                   (g.reader["id"], recommendation["article_id"]))
+                    else:
+                        db.execute("DELETE FROM saved_stories WHERE reader_id=? AND article_id=?",
+                                   (g.reader["id"], recommendation["article_id"]))
         except ValueError as exc:
             abort(400, description=str(exc))
         return redirect(url_for("discover"))
@@ -385,8 +430,11 @@ def create_app(test_config=None):
     def paper_save():
         if g.reader is None:
             return redirect(url_for("profiles"))
-        set_saved(get_db(), g.reader["id"], request.form.get("article_id", ""),
-                  request.form.get("edition_id", ""), request.form.get("saved") == "1")
+        try:
+            set_saved(get_db(), g.reader["id"], request.form.get("article_id", ""),
+                      request.form.get("edition_id", ""), request.form.get("saved") == "1")
+        except ValueError:
+            abort(400, description="That saved story update is invalid.")
         return redirect(url_for("paper"))
 
     @app.post("/paper/progress")
@@ -422,6 +470,20 @@ def create_app(test_config=None):
         if edition is None:
             abort(404, description="That edition could not be found.")
         try:
+            if getattr(export_pdf, "__module__", "") == "pdf_export":
+                from pdf_export import cached_pdf_path
+                try:
+                    cached_pdf_path(ROOT, edition)
+                except OSError:
+                    pass
+                else:
+                    try:
+                        from playwright.sync_api import sync_playwright
+                    except ImportError as exc:
+                        raise RuntimeError(
+                            "PDF export is unavailable in this runtime. For local export, install requirements-local.txt and run "
+                            "python -m playwright install chromium."
+                        ) from exc
             payload, _cached = export_pdf(ROOT, edition, edition_items(db, edition_id, g.reader["id"]))
         except RuntimeError as exc:
             abort(503, description=str(exc))

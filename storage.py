@@ -1,8 +1,10 @@
-"""SQLite storage for MyNews. Each request gets its own connection."""
+"""SQLite/PostgreSQL storage and transactions. Each request owns its connection."""
 import json
 import os
 import re
 import sqlite3
+from contextlib import contextmanager
+from functools import wraps
 from flask import current_app, g
 
 
@@ -20,7 +22,13 @@ class PostgresDatabase:
     def __init__(self, url):
         import psycopg
         from psycopg.rows import dict_row
-        self.connection = psycopg.connect(url, row_factory=dict_row)
+        # Reads must not silently open transactions before an explicit BEGIN.
+        self.connection = psycopg.connect(url, row_factory=dict_row, autocommit=True,
+                                          connect_timeout=5)
+
+    @property
+    def in_transaction(self):
+        return self.connection.info.transaction_status != 0
 
     @staticmethod
     def _normalize(row):
@@ -28,7 +36,7 @@ class PostgresDatabase:
         json_columns = {
             "data", "categories", "topics", "embedding", "topic_weights",
             "recent_weights", "anchors", "evidence", "exclusions",
-            "policy_a", "policy_b", "features", "profile_snapshot",
+            "policy_a", "policy_b", "features", "profile_snapshot", "report",
         }
         if row is None:
             return None
@@ -55,6 +63,7 @@ class PostgresDatabase:
         self.connection.close()
 
     def __enter__(self):
+        self.execute("BEGIN")
         return self
 
     def __exit__(self, exc_type, _exc_value, _traceback):
@@ -88,6 +97,38 @@ class PostgresCursor:
         return self.cursor.rowcount
 
 
+@contextmanager
+def transaction(db):
+    """Join a caller's transaction; only its owner may commit or roll it back."""
+    owner = not db.in_transaction
+    if owner:
+        db.execute("BEGIN IMMEDIATE")
+    try:
+        if owner and getattr(db, "is_postgres", False):
+            db.execute("SET LOCAL statement_timeout = '5s'")
+        yield
+        if owner:
+            db.commit()
+    except Exception:
+        if owner:
+            db.rollback()
+        raise
+
+
+def reader_write(function):
+    """Serialize learning and edition writes per reader, including across functions."""
+    @wraps(function)
+    def wrapped(db, reader_id, *args, **kwargs):
+        with transaction(db):
+            sql = "SELECT id FROM readers WHERE id=?"
+            if getattr(db, "is_postgres", False):
+                sql += " FOR UPDATE"
+            if db.execute(sql, (reader_id,)).fetchone() is None:
+                raise ValueError("That reader could not be found.")
+            return function(db, reader_id, *args, **kwargs)
+    return wrapped
+
+
 def get_db():
     if "db" not in g:
         if _postgres_enabled():
@@ -111,7 +152,7 @@ def init_db():
         _init_postgres(db)
         return
     version = db.execute("PRAGMA user_version").fetchone()[0]
-    if version > 6:
+    if version > 7:
         raise RuntimeError("This database needs a newer version of MyNews.")
     if version == 0:
         db.executescript("""
@@ -295,10 +336,30 @@ def init_db():
             COMMIT;
         """)
         version = 6
+    if version == 6:
+        db.executescript("""
+            BEGIN IMMEDIATE;
+            CREATE TABLE ingestion_state (
+                id INTEGER PRIMARY KEY CHECK(id=1),
+                lease_token TEXT, lease_until TEXT,
+                started_at TEXT, completed_at TEXT, last_success_at TEXT,
+                status TEXT NOT NULL DEFAULT 'never', report TEXT NOT NULL DEFAULT '{}'
+            );
+            INSERT INTO ingestion_state(id) VALUES (1);
+            PRAGMA user_version = 7;
+            COMMIT;
+        """)
 
 
 def _init_postgres(db):
     """Create/update the Neon schema without touching the local SQLite file."""
+    with transaction(db):
+        # Transaction-scoped locks also work with Neon's pooled connections.
+        db.execute("SELECT pg_advisory_xact_lock(718231)")
+        _postgres_schema(db)
+
+
+def _postgres_schema(db):
     db.execute("""
         CREATE TABLE IF NOT EXISTS schema_migrations (
             version INTEGER PRIMARY KEY,
@@ -398,13 +459,18 @@ def _init_postgres(db):
         );
         CREATE INDEX IF NOT EXISTS worker_jobs_status_idx ON worker_jobs(status, local_date);
         ALTER TABLE edition_items ADD COLUMN IF NOT EXISTS image_url TEXT;
+        CREATE TABLE IF NOT EXISTS ingestion_state (
+            id INTEGER PRIMARY KEY CHECK(id=1), lease_token TEXT, lease_until TIMESTAMPTZ,
+            started_at TIMESTAMPTZ, completed_at TIMESTAMPTZ, last_success_at TIMESTAMPTZ,
+            status TEXT NOT NULL DEFAULT 'never', report JSONB NOT NULL DEFAULT '{}'
+        );
+        INSERT INTO ingestion_state(id) VALUES (1) ON CONFLICT(id) DO NOTHING;
     """
     for statement in schema.split(";"):
         statement = statement.strip()
         if statement:
             db.execute(statement)
-    db.execute("INSERT INTO schema_migrations(version) VALUES (6) ON CONFLICT(version) DO NOTHING")
-    db.commit()
+    db.execute("INSERT INTO schema_migrations(version) VALUES (7) ON CONFLICT(version) DO NOTHING")
 
 
 def preferences(reader_id):

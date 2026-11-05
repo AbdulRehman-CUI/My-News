@@ -8,12 +8,13 @@ import re
 import socket
 import sys
 import time
-from dataclasses import dataclass
-from datetime import datetime, timezone
+import uuid
+from dataclasses import asdict, dataclass
+from datetime import datetime, timedelta, timezone
 from html import unescape
 from urllib.parse import urljoin, urlparse, urlunparse
-
 from taxonomy import TOPICS
+from storage import transaction
 
 MODEL_ID = "sentence-transformers/all-MiniLM-L6-v2"
 API_BASE = "https://api.thenewsapi.com/v1/news"
@@ -37,6 +38,12 @@ class IngestReport:
     embeddings_created: int = 0
     embeddings_reused: int = 0
     errors: list[str] | None = None
+    provider_requests: int = 0
+    processed: int = 0
+    bounded: bool = False
+    status: str = "running"
+    total_eligible: int = 0
+    last_success_at: str | None = None
 
     def __post_init__(self):
         if self.errors is None:
@@ -121,44 +128,80 @@ def topic_matches(title, description, supplied):
     return selected or [topic for topic in supplied if topic in TOPICS][:1] or list(TOPICS)[:1]
 
 
-def _request(session, url, report, timeout=10, params=None, budget_db=None, budget_limit=80):
+def _request(session, url, report, deadline, label, timeout=4, params=None,
+             budget_db=None, budget_limit=80, max_requests=16, allowed_hosts=None):
+    """Bound bytes, redirects, retries, requests and remaining execution time."""
     for attempt in range(2):
-        if budget_db is not None:
-            if not _api_allowed(budget_db, budget_limit):
-                report.errors.append("thenewsapi: local request budget exhausted")
-                return None
-            _count_api(budget_db)
-        report.attempted += 1
         try:
-            response = session.get(url, params=params, timeout=timeout, headers={"User-Agent": "MyNews/2.0"})
-            if response.status_code == 429:
-                raise RuntimeError("provider rate limit")
-            response.raise_for_status()
-            report.successful += 1
-            return response
+            target = url
+            for redirect in range(4):
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or report.provider_requests >= max_requests:
+                    report.bounded = True
+                    return None
+                if not safe_public_url(target):
+                    raise ValueError("unsafe provider destination")
+                if allowed_hosts and urlparse(target).hostname not in allowed_hosts:
+                    raise ValueError("unconfigured publisher")
+                if budget_db is not None:
+                    with transaction(budget_db):
+                        if not _api_allowed(budget_db, budget_limit):
+                            report.errors.append("thenewsapi: local request budget exhausted")
+                            return None
+                        _count_api(budget_db)
+                report.provider_requests += 1
+                response = session.get(target, params=params, timeout=min(timeout, max(0.1, remaining / 2)),
+                                       headers={"User-Agent": "MyNews/2.0"}, stream=True,
+                                       allow_redirects=False)
+                try:
+                    if response.status_code in (301, 302, 303, 307, 308):
+                        # Never forward API credentials to a redirect destination.
+                        if params or redirect == 3:
+                            raise ValueError("provider redirect rejected")
+                        target = urljoin(target, response.headers.get("Location", ""))
+                        continue
+                    response.raise_for_status()
+                    chunks, size = [], 0
+                    for chunk in response.iter_content(chunk_size=16384):
+                        size += len(chunk)
+                        if size > MAX_RESPONSE_BYTES:
+                            raise ValueError("provider response too large")
+                        if time.monotonic() >= deadline:
+                            report.bounded = True
+                            return None
+                        chunks.append(chunk)
+                    return b"".join(chunks)
+                finally:
+                    response.close()
         except Exception as exc:
             if attempt == 1:
-                report.errors.append(f"{urlparse(url).netloc}: {type(exc).__name__}")
+                # Exception text and request URLs may contain provider credentials.
+                report.errors.append(f"{label}: {type(exc).__name__}")
     return None
 
 
 def _feed_entries(content):
     try:
         import feedparser
-        return feedparser.parse(content).entries
+        parsed = feedparser.parse(content)
+        if not parsed.version:
+            raise RuntimeError("invalid RSS/Atom response")
+        return parsed.entries
     except ImportError:
         raise RuntimeError("feedparser is not installed")
 
 
-def _article_from_entry(entry, feed_topics, fetch_full_text=True):
+def _article_from_entry(entry, feed_topics, extractor=None):
     link = safe_public_url(entry.get("link", ""))
     if not link:
         return None
     title = clean_text(entry.get("title", ""))
+    if not title:
+        return None
     description = clean_text(entry.get("summary", entry.get("description", "")))
     text = clean_text(entry.get("content", [{}])[0].get("value", "") if entry.get("content") else "")
-    if not text and link and fetch_full_text:
-        text = extract_permitted_text(link)
+    if not text and len(description) < 40 and extractor:
+        text = extractor(link)
     topics = topic_matches(title, description, feed_topics)
     content = text or description
     depth = classify_content(description, text)
@@ -178,23 +221,20 @@ def _article_from_entry(entry, feed_topics, fetch_full_text=True):
     }
 
 
-def extract_permitted_text(url, session=None):
+def extract_permitted_text(url, session=None, report=None, deadline=None):
     """Extract only configured/public article pages; never follow arbitrary user URLs."""
     allowed_hosts = {urlparse(feed).hostname for feed in _configured_feeds()}
     host = urlparse(url).hostname
-    if host not in allowed_hosts:
+    if host not in allowed_hosts or not safe_public_url(url):
         return ""
     try:
         import requests
-        response = (session or requests.Session()).get(
-            url, timeout=10, headers={"User-Agent": "MyNews/2.0"}, stream=True
-        )
-        response.raise_for_status()
-        body = response.raw.read(MAX_RESPONSE_BYTES + 1)
-        if len(body) > MAX_RESPONSE_BYTES:
+        body = _request(session or requests.Session(), url, report or IngestReport(),
+                        deadline or time.monotonic() + 8, "extraction", allowed_hosts=allowed_hosts)
+        if not body:
             return ""
         import trafilatura
-        return clean_text(trafilatura.extract(body.decode(response.encoding or "utf-8", errors="replace")) or "")
+        return clean_text(trafilatura.extract(body.decode("utf-8", errors="replace")) or "")
     except Exception:
         return ""
 
@@ -228,14 +268,17 @@ def _configured_feeds():
     try:
         data = json.loads(raw)
         return {str(url): list(topics) for url, topics in data.items()}
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, AttributeError):
         return DEFAULT_FEEDS
 
 
 def _api_allowed(db, limit):
-    row = db.execute("SELECT window_start, requests_used FROM news_usage WHERE id = 1").fetchone()
+    sql = "SELECT window_start, requests_used FROM news_usage WHERE id = 1"
+    if getattr(db, "is_postgres", False):
+        sql += " FOR UPDATE"
+    row = db.execute(sql).fetchone()
     current = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:00:00Z")
-    if not row or row["window_start"] != current:
+    if not row or parse_date(row["window_start"]) != current:
         db.execute("UPDATE news_usage SET window_start = ?, requests_used = 0 WHERE id = 1", (current,))
         return True
     return row["requests_used"] < limit
@@ -245,40 +288,127 @@ def _count_api(db):
     db.execute("UPDATE news_usage SET requests_used = requests_used + 1 WHERE id = 1")
 
 
+def article_counts(db):
+    row = db.execute("""SELECT COUNT(*) AS articles,
+        COALESCE(SUM(CASE WHEN content_depth != 'preview_only' THEN 1 ELSE 0 END),0) AS eligible,
+        MAX(retrieved_at) AS latest_article_ingestion_at FROM articles""").fetchone()
+    return dict(row)
+
+
+def ingestion_diagnostics(db):
+    counts = article_counts(db)
+    state = db.execute("SELECT * FROM ingestion_state WHERE id=1").fetchone()
+    status = state["status"]
+    if status == "running" and state["lease_until"] and parse_date(state["lease_until"]) < _stamp():
+        status = "interrupted"
+    return {"database_connected": True, "article_count": counts["articles"],
+            "eligible_article_count": counts["eligible"],
+            "latest_article_ingestion_at": counts["latest_article_ingestion_at"],
+            "last_ingestion_status": status, "last_ingestion_started_at": state["started_at"],
+            "last_ingestion_completed_at": state["completed_at"],
+            "last_success_at": state["last_success_at"], "last_report": json.loads(state["report"])}
+
+
+def _stamp(now=None):
+    return (now or datetime.now(timezone.utc)).isoformat().replace("+00:00", "Z")
+
+
 def ingest(db, session=None, feeds=None, api_key=None, model=None, api_limit=80,
-           max_entries_per_feed=20, fetch_full_text=True):
+           max_seconds=35, max_articles=40, per_source=6,
+           max_entries_per_feed=None, fetch_full_text=True):
+    """One bounded refresh, independent of reader setup and optional ML packages."""
+    if db.in_transaction:
+        raise ValueError("Ingestion requires an idle connection to publish its lease.")
+    deadline = time.monotonic() + min(35, max(0, max_seconds))
+    max_articles, per_source = max(0, min(40, max_articles)), max(0, min(10, per_source))
+    if max_entries_per_feed is not None:
+        per_source = min(per_source, max(0, max_entries_per_feed))
+    token = uuid.uuid4().hex
+    with transaction(db):
+        claimed = db.execute("""UPDATE ingestion_state SET lease_token=?, lease_until=?,
+            started_at=?, status='running' WHERE id=1
+            AND (lease_token IS NULL OR lease_until < ?)""",
+            (token, _stamp(datetime.now(timezone.utc) + timedelta(seconds=120)), _stamp(), _stamp())).rowcount
+    report = IngestReport()
+    if not claimed:
+        report.status = "busy"
+        report.total_eligible = article_counts(db)["eligible"]
+        report.last_success_at = ingestion_diagnostics(db)["last_success_at"]
+        return report
+    own_session = session is None
     import requests
     session = session or requests.Session()
-    report = IngestReport()
-    feeds = feeds or _configured_feeds()
-    for url, topics in feeds.items():
-        response = _request(session, url, report)
-        if response is None:
-            continue
-        try:
-            entries = _feed_entries(response.content)
-        except RuntimeError as exc:
-            report.errors.append(str(exc))
-            continue
-        for entry in entries[:max_entries_per_feed]:
-            article = _article_from_entry(entry, topics, fetch_full_text=fetch_full_text)
-            if article:
+    def exhausted():
+        hit = time.monotonic() >= deadline or report.processed >= max_articles
+        report.bounded |= hit
+        return hit
+
+    def store(article):
+        if article:
+            report.processed += 1
+            with transaction(db):
+                sql = "SELECT lease_token FROM ingestion_state WHERE id=1"
+                if getattr(db, "is_postgres", False):
+                    sql += " FOR UPDATE"
+                if db.execute(sql).fetchone()["lease_token"] != token:
+                    raise RuntimeError("ingestion lease lost")
                 _store_article(db, article, report, model)
-    if api_key and _api_allowed(db, api_limit):
-        for endpoint in ("top", "all"):
-            response = _request(session, f"{API_BASE}/{endpoint}", report,
-                                params={"api_token": api_key}, budget_db=db, budget_limit=api_limit)
-            if response is None:
+
+    extractions = 0
+    def extract(url):
+        nonlocal extractions
+        if extractions >= 4 or exhausted():
+            return ""
+        extractions += 1
+        return extract_permitted_text(url, session=session, report=report, deadline=deadline)
+
+    try:
+        configured = _configured_feeds() if feeds is None else feeds
+        sources = [(f"rss:{i+1}", url, topics) for i, (url, topics) in enumerate(list(configured.items())[:4])]
+        if api_key:
+            sources += [(f"thenewsapi:{endpoint}", f"{API_BASE}/{endpoint}", None) for endpoint in ("top", "all")]
+        for label, url, topics in sources:
+            if exhausted():
+                break
+            report.attempted += 1
+            is_api = topics is None
+            body = _request(session, url, report, deadline, label,
+                            params={"api_token": api_key, "limit": per_source} if is_api else None,
+                            budget_db=db if is_api else None, budget_limit=api_limit)
+            if body is None:
                 continue
             try:
-                payload = response.json()
-                for item in payload.get("data", []):
-                    article = _api_article(item)
-                    if article:
-                        _store_article(db, article, report, model)
-            except (ValueError, TypeError):
-                report.errors.append("thenewsapi: invalid response")
-    db.commit()
+                entries = json.loads(body).get("data", []) if is_api else _feed_entries(body)
+                if not isinstance(entries, list):
+                    raise ValueError("invalid entries")
+            except (TypeError, ValueError, RuntimeError, AttributeError):
+                report.errors.append(f"{label}: invalid response")
+                continue
+            report.successful += 1
+            for entry in entries[:per_source]:
+                if exhausted():
+                    break
+                try:
+                    article = _api_article(entry) if is_api else _article_from_entry(
+                        entry, topics, extractor=extract if fetch_full_text else None)
+                except (TypeError, ValueError, KeyError, AttributeError):
+                    report.errors.append(f"{label}: invalid article")
+                    continue
+                store(article)
+        report.status = "partial" if report.errors and report.successful else ("succeeded" if report.successful else "failed")
+    except Exception as exc:
+        report.status = "failed"
+        report.errors.append(f"ingestion: {type(exc).__name__}")
+    finally:
+        if own_session:
+            session.close()
+        with transaction(db):
+            report.total_eligible = article_counts(db)["eligible"]
+            previous = db.execute("SELECT last_success_at FROM ingestion_state WHERE id=1").fetchone()
+            report.last_success_at = _stamp() if report.status in ("succeeded", "partial") else previous["last_success_at"]
+            db.execute("""UPDATE ingestion_state SET lease_token=NULL, lease_until=NULL,
+                completed_at=?, last_success_at=?, status=?, report=? WHERE id=1 AND lease_token=?""",
+                (_stamp(), report.last_success_at, report.status, json.dumps(asdict(report)), token))
     return report
 
 
@@ -287,6 +417,8 @@ def _api_article(item):
     if not link:
         return None
     title = clean_text(item.get("title"))
+    if not title:
+        return None
     description = clean_text(item.get("description"))
     text = clean_text(item.get("content"))
     topics = topic_matches(title, description, [x for x in TOPICS])
@@ -306,16 +438,23 @@ def _api_article(item):
 
 
 def _store_article(db, article, report, model):
-    existing = db.execute("SELECT content_hash, embedding FROM articles WHERE canonical_url = ?", (article["canonical_url"],)).fetchone()
+    existing = db.execute("SELECT content_hash, embedding, embedding_model, content_depth FROM articles WHERE canonical_url = ?", (article["canonical_url"],)).fetchone()
+    if article["content_depth"] == "preview_only":
+        report.preview_only += 1
+    else:
+        report.usable += 1
     if existing:
         report.duplicate += 1
         article["embedding"] = json.loads(existing["embedding"]) if existing["embedding"] else None
-        if existing["content_hash"] == article["content_hash"]:
+        if existing["content_hash"] == article["content_hash"] and (existing["embedding"] or model is None):
             report.embeddings_reused += bool(article["embedding"])
             return
-    embedding, reused = prepare_embedding(article, model, existing["content_hash"] if existing else None)
+    embedding, reused = prepare_embedding(article, model, existing["content_hash"] if existing and existing["embedding"] else None)
     article["embedding"] = embedding if embedding is not None else (json.loads(existing["embedding"]) if existing and existing["embedding"] else None)
-    article["embedding_model"] = MODEL_ID if article["embedding"] else None
+    article["embedding_model"] = MODEL_ID if embedding is not None else (existing["embedding_model"] if existing else None)
+    # A temporary extraction failure must not downgrade previously usable content.
+    if existing and existing["content_depth"] != "preview_only" and article["content_depth"] == "preview_only":
+        return
     db.execute("""INSERT INTO articles
         (id, canonical_url, title, publisher, language, image_url, published_at, retrieved_at,
          categories, topics, description, article_text, brief, detail, content_depth,
@@ -332,10 +471,6 @@ def _store_article(db, article, report, model):
          json.dumps(article["categories"]), json.dumps(article["topics"]), article["description"], article["article_text"],
          article["brief"], article["detail"], article["content_depth"], article["content_hash"], article["story_group_id"],
          article["embedding_model"], json.dumps(article["embedding"]) if article["embedding"] else None))
-    if article["content_depth"] == "preview_only":
-        report.preview_only += 1
-    else:
-        report.usable += 1
     if embedding is not None:
         report.embeddings_created += 1
     elif reused:
@@ -360,8 +495,8 @@ def calibration_articles(db, prefs, limit=6):
 
 
 def remaining_budget(db):
-    row = db.execute("SELECT request_limit - requests_used FROM news_usage WHERE id = 1").fetchone()
-    return max(0, row[0]) if row else 0
+    row = db.execute("SELECT request_limit - requests_used AS remaining FROM news_usage WHERE id = 1").fetchone()
+    return max(0, row["remaining"]) if row else 0
 
 
 def main():

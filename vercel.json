@@ -1,4 +1,11 @@
 {
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "api/index.py": {
+      "maxDuration": 60,
+      "excludeFiles": "{.venv/**,.tmp/**,tests/**,models/**,generated/**,instance/**,.cache/**}"
+    }
+  },
   "crons": [
     {
       "path": "/api/cron/ingest",

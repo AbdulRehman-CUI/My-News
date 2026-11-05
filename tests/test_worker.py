@@ -42,11 +42,11 @@ class WorkerTests(unittest.TestCase):
 
         def generate(db, reader_id, prefs, now=None):
             calls.append(reader_id)
-            return {"id": f"edition-{reader_id}", "status": "empty"}
+            return {"id": f"edition-{reader_id}", "status": "ready"}
 
         first = run_once(self.db, now=now, generate_fn=generate)
         second = run_once(self.db, now=now, generate_fn=generate)
-        self.assertEqual([item["status"] for item in first["results"]], ["empty", "not_due"])
+        self.assertEqual([item["status"] for item in first["results"]], ["ready", "not_due"])
         self.assertEqual(second["results"][0]["status"], "already_claimed")
         self.assertEqual(calls, [1])
 

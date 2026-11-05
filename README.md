@@ -48,7 +48,8 @@ The application is a small Flask and SQLite system with separate modules:
 ### Data flow
 
 1. `news.py` fetches shared provider content and stores normalized articles in
-   SQLite. It is run manually or by the worker; page loads do not make separate
+   the configured database. It is run by authenticated cron, manually, or by the
+   local worker; page loads do not make separate
    provider requests for each reader.
 2. Onboarding stores validated reader preferences and a saved IANA timezone.
 3. `recommender.py` selects eligible stories using explicit interests, learned
@@ -67,7 +68,7 @@ The application is a small Flask and SQLite system with separate modules:
 - Windows, macOS, or Linux.
 - Python 3.12 recommended.
 - Internet access for dependency installation and optional live ingestion.
-- Chromium installed through Playwright for PDF downloads.
+- Optional: Playwright and Chromium for local PDF downloads.
 - A writable local directory for SQLite, cached models, and generated PDFs.
 
 The application and automated tests can run offline after dependencies and
@@ -82,8 +83,10 @@ From PowerShell:
 Set-Location -LiteralPath "C:\Users\J A\Desktop\Nascon 26'"
 py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe -m playwright install chromium
 .\.venv\Scripts\python.exe -m pip check
+# Optional local neural embeddings and PDF export:
+# .\.venv\Scripts\python.exe -m pip install -r requirements-local.txt
+# .\.venv\Scripts\python.exe -m playwright install chromium
 ```
 
 If the Windows Python launcher is unavailable, use a normal Python 3.12
@@ -151,21 +154,40 @@ The Neon schema is initialized non-destructively on first request. Local SQLite
 data is not automatically copied to Neon; export/import is a separate migration
 operation and must be planned with reader ownership and credentials.
 
-Vercel's standard serverless filesystem is ephemeral. PostgreSQL is therefore
-the durable store, but generated PDF files and downloaded embedding models
-cannot be treated as durable deployment storage. PDF export requires a
-Vercel-compatible Chromium/runtime configuration, and the sentence-transformer
-model must be available in the deployment image; the current repository does
-not silently disable either feature. If the platform cannot package those
-assets within its function limits, PDF/model-backed requests are a deployment
-blocker rather than a claimed success.
+Production uses the lightweight `requirements.txt`. Neural embeddings and PDF
+export are optional local features in `requirements-local.txt`; production does
+not install SentenceTransformer, PyTorch, Playwright, or Chromium. Ranking keeps
+NumPy LinUCB and uses explicit interests, learned topic weights, freshness,
+significance, diversity, and exploration when semantic embeddings are absent.
+Existing vectors and reader learning are preserved.
 
-The local `worker.py` process cannot run continuously inside a normal Vercel
-function. Scheduled morning generation therefore requires an external free
-scheduled invocation that calls a bounded worker entrypoint, or remains a
-manual/on-demand operation. Reader-selected morning times are not guaranteed
-until that scheduler is configured. No paid service or deployment scheduler is
-added here.
+`pyproject.toml` explicitly selects `api.index:app` for the connected Flask
+project. `.python-version` selects Python 3.12. `vercel.json` configures a
+60-second function and authenticated daily news ingestion at `01:00 UTC`.
+Vercel Hobby may invoke it during the following hour. Existing `DATABASE_URL`,
+`MYNEWS_SECRET_KEY`, allowed hosts, and optional provider settings still apply.
+Use the **existing** production `CRON_SECRET` for both administrative endpoints:
+
+- `GET /api/cron/ingest` refreshes the shared article pool, without a reader session.
+- `GET /api/admin/ingestion` reports database and ingestion health.
+
+Both require `Authorization: Bearer <existing CRON_SECRET>`, reject missing or
+invalid authorization before querying the database, and return uncached JSON.
+Never put the secret in a query string. An authenticated manual call to the same
+ingestion route safely populates an initially empty database. News ingestion is
+independent of onboarding and edition generation.
+
+Read [the production runbook](PRODUCTION_INGESTION.md) for the root-cause trace,
+exact first-ingestion commands, diagnostics, an optional free hourly GitHub
+Actions scheduler, verification, transaction behavior, and runtime limits.
+No production secrets or existing user data need to be replaced.
+
+The website prepares a reader's current local-date edition on demand. An empty
+edition is retryable after ingestion; a populated edition is immutable. The
+local worker can still prepare editions ahead of a reader's ready time. The
+news cron does not promise ahead-of-time editions for every reader/timezone.
+Vercel does not run the local worker loop automatically. PDF requests return a
+clear 503 when the optional browser runtime is unavailable.
 
 ## News ingestion
 
@@ -290,9 +312,10 @@ and original source references. It does not rerank stories, regenerate text,
 read mutable article content, or depend on remote images. Cached files are stored
 under ignored `generated/`.
 
-If PDF export reports that Chromium is unavailable:
+For local PDF export only, first install the optional dependencies:
 
 ```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-local.txt
 .\.venv\Scripts\python.exe -m playwright install chromium
 ```
 
@@ -312,15 +335,16 @@ $env:TMP = $env:TEMP
 The tests use temporary SQLite databases and mocked providers. They cover
 onboarding persistence, migration safety, RSS/API ingestion behavior,
 recommendation learning and isolation, edition snapshots, saving, reading
-progress, PDF signatures, archive search, ownership, scheduling, timezone
+progress, mocked PDF route responses, archive search, ownership, scheduling, timezone
 boundaries, DST resolution, duplicate claims, and bounded worker failures.
 
 Offline GitHub Actions checks are defined in
 [.github/workflows/ci.yml](.github/workflows/ci.yml). CI does not require live
 news, TheNewsAPI credentials, a large embedding download, or Chromium.
 
-Optional PostgreSQL checks use the server-side `DATABASE_URL` already present in
-the environment and skip when it is absent:
+Optional PostgreSQL checks use an explicitly supplied disposable
+`MYNEWS_TEST_DATABASE_URL` and skip when it is absent. They never use the
+production `DATABASE_URL`:
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest tests.test_postgres
@@ -330,13 +354,13 @@ No connection string or other secret is printed by the checks.
 
 ## Known limitations
 
-- Automatic worker execution requires the local computer and worker process to
-  remain running.
+- Ahead-of-time edition generation requires the local worker to remain running;
+  production news refresh uses the configured cron and editions recover on page load.
 - PDF bytes and route behavior are tested automatically; every PDF page still
   requires manual visual inspection for final typography and layout review.
 - Real provider availability, content depth, and article quality vary by source.
-- Neon persistence is implemented, but deployment credentials and Vercel runtime
-  execution must be verified in the connected project.
+- Live Neon contents, the deployed bundle size, and actual scheduler execution
+  must be verified after deploying, using the authenticated runbook procedure.
 - Standard Vercel functions do not provide durable local PDF/model caches or a
   persistent worker loop.
 - The deployment profile boundary is session-based, not a full account system;

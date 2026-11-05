@@ -3,7 +3,7 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from app import create_app
 from news import canonical_url, extract_permitted_text, ingest
@@ -18,6 +18,9 @@ RSS = b"""<?xml version="1.0"?><rss><channel>
 
 class NewsTests(unittest.TestCase):
     def setUp(self):
+        urls = patch("news.safe_public_url", side_effect=canonical_url)
+        urls.start()
+        self.addCleanup(urls.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.path = str(Path(self.temp.name) / "news.sqlite3")
         self.app = create_app({"TESTING": True, "SECRET_KEY": "test", "DATABASE": self.path})
@@ -31,6 +34,7 @@ class NewsTests(unittest.TestCase):
     def test_rss_only_deduplicates_and_preserves_unknown_date(self):
         response = Mock(content=RSS, status_code=200)
         response.raise_for_status.return_value = None
+        response.iter_content.return_value = [RSS]
         session = Mock()
         session.get.return_value = response
         first = ingest(self.db, session=session, feeds={"https://feed.example/rss": ["Technology"]}, model=None)
@@ -49,9 +53,12 @@ class NewsTests(unittest.TestCase):
                 csrf = session["csrf"]
             response = client.post("/profiles", data={"csrf_token": csrf, "display_name": "Existing"})
             self.assertEqual(response.status_code, 302)
+        # Recreate the immediately preceding schema, retaining its reader data.
+        self.db.executescript("DROP TABLE ingestion_state; PRAGMA user_version=6;")
+        create_app({"TESTING": True, "SECRET_KEY": "test", "DATABASE": self.path})
         row = self.db.execute("SELECT display_name FROM readers").fetchone()
         self.assertEqual(row["display_name"], "Existing")
-        self.assertEqual(self.db.execute("PRAGMA user_version").fetchone()[0], 6)
+        self.assertEqual(self.db.execute("PRAGMA user_version").fetchone()[0], 7)
 
     def test_unsafe_extraction_and_embedding_fallback(self):
         self.assertIsNone(canonical_url("file:///etc/passwd"))
@@ -63,6 +70,7 @@ class NewsTests(unittest.TestCase):
                 return [0.1, 0.2]
         response = Mock(content=RSS, status_code=200)
         response.raise_for_status.return_value = None
+        response.iter_content.return_value = [RSS]
         session = Mock()
         session.get.return_value = response
         first = ingest(self.db, session=session, feeds={"https://feed.example/rss": ["Technology"]}, model=Model())
@@ -70,9 +78,24 @@ class NewsTests(unittest.TestCase):
         self.assertEqual(first.embeddings_created, 1)
         self.assertGreaterEqual(second.embeddings_reused, 1)
 
+    def test_optional_local_model_can_fill_a_previously_missing_embedding(self):
+        class Model:
+            def encode(self, text, normalize_embeddings=True):
+                return [0.1, 0.2]
+        result = Mock(status_code=200)
+        result.iter_content.return_value = [RSS]
+        session = Mock()
+        session.get.return_value = result
+        ingest(self.db, session=session, feeds={"https://feed.example/rss": ["Technology"]}, model=None)
+        enriched = ingest(self.db, session=session, feeds={"https://feed.example/rss": ["Technology"]}, model=Model())
+        self.assertEqual(enriched.new, 0)
+        self.assertEqual(enriched.embeddings_created, 1)
+        self.assertEqual(json.loads(self.db.execute("SELECT embedding FROM articles").fetchone()[0]), [0.1, 0.2])
+
     def test_real_cached_headline_is_rendered_for_calibration(self):
         response = Mock(content=RSS, status_code=200)
         response.raise_for_status.return_value = None
+        response.iter_content.return_value = [RSS]
         session = Mock()
         session.get.return_value = response
         ingest(self.db, session=session, feeds={"https://feed.example/rss": ["Technology"]}, model=None)

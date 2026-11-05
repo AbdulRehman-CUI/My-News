@@ -8,6 +8,7 @@ import numpy as np
 
 from news import MODEL_ID
 from taxonomy import TOPICS
+from storage import reader_write
 
 FEATURE_VERSION = "features-v1"
 POLICY_VERSION = "linucb-v1"
@@ -59,6 +60,7 @@ def _default_state(prefs):
     }
 
 
+@reader_write
 def ensure_state(db, reader_id, prefs):
     row = db.execute("SELECT * FROM reader_learning WHERE reader_id = ?", (reader_id,)).fetchone()
     if row:
@@ -81,7 +83,6 @@ def ensure_state(db, reader_id, prefs):
                 state["anchors"].append(embedding)
     state["anchors"] = state["anchors"][-5:]
     _save_state(db, reader_id, state)
-    db.commit()
     return state
 
 
@@ -164,6 +165,7 @@ def _reason(features, topics, adjacent):
     return "; ".join(evidence) + f" ({', '.join(sorted(topics))})"
 
 
+@reader_write
 def recommend(db, reader_id, prefs, surface="discover", limit=10):
     state = ensure_state(db, reader_id, prefs)
     state["recent_weights"] = {
@@ -217,9 +219,7 @@ def recommend(db, reader_id, prefs, surface="discover", limit=10):
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (recommendation_id, reader_id, row["id"], surface, position, _json(features.tolist()),
              score, result[-1]["reason"], result[-1]["policy_version"], state["generation"]))
-    db.commit()
     _save_state(db, reader_id, state)
-    db.commit()
     return result
 
 
@@ -259,6 +259,7 @@ def _apply_profile_delta(state, article, delta):
         state["anchors"] = (state["anchors"] + [embedding])[-5:]
 
 
+@reader_write
 def record_feedback(db, reader_id, recommendation_id, event_id, event_type):
     if event_type not in REWARDS and event_type not in ("save", "unsave"):
         raise ValueError("Unsupported feedback event.")
@@ -285,17 +286,17 @@ def record_feedback(db, reader_id, recommendation_id, event_id, event_type):
         db.execute("UPDATE recommendations SET covariance_applied=1 WHERE id=?", (recommendation_id,))
     db.execute("UPDATE recommendations SET effective_reward=? WHERE id=?", (new_reward, recommendation_id))
     _save_state(db, reader_id, state)
-    db.commit()
     return True
 
 
+@reader_write
 def set_exclusions(db, reader_id, exclusions):
     state = ensure_state(db, reader_id, {})
     state["exclusions"] = sorted(set(exclusions) & set(TOPICS))
     _save_state(db, reader_id, state)
-    db.commit()
 
 
+@reader_write
 def reset_learning(db, reader_id):
     state = ensure_state(db, reader_id, {})
     state.update(topic_weights={topic: 0.0 for topic in TOPICS},
@@ -304,7 +305,6 @@ def reset_learning(db, reader_id):
                  policy_a=(np.eye(len(FEATURE_NAMES))).tolist(), policy_b=[0.0] * len(FEATURE_NAMES),
                  generation=state["generation"] + 1)
     _save_state(db, reader_id, state)
-    db.commit()
 
 
 def learning_summary(db, reader_id, prefs):

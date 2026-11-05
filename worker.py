@@ -60,20 +60,18 @@ def due_readers(db, now):
 
 def _claim(db, reader_id, local_date, now):
     stamp = _utc(now)
-    db.execute("""INSERT INTO worker_jobs(reader_id, local_date, status, attempts, claimed_at)
+    claimed = db.execute("""INSERT INTO worker_jobs(reader_id, local_date, status, attempts, claimed_at)
         VALUES (?, ?, 'claimed', 1, ?)
         ON CONFLICT(reader_id, local_date) DO UPDATE SET
         status='claimed', attempts=worker_jobs.attempts+1, claimed_at=excluded.claimed_at,
         last_error=NULL
         WHERE worker_jobs.attempts < ?
-          AND (worker_jobs.status != 'succeeded'
-           OR worker_jobs.claimed_at IS NULL
-           OR worker_jobs.claimed_at < ?)""",
-        (reader_id, local_date, stamp, MAX_ATTEMPTS, _utc(now - CLAIM_TIMEOUT)))
+          AND (worker_jobs.status = 'failed'
+           OR (worker_jobs.status IN ('claimed','preparing','generating')
+               AND (worker_jobs.claimed_at IS NULL OR worker_jobs.claimed_at < ?)))""",
+        (reader_id, local_date, stamp, MAX_ATTEMPTS, _utc(now - CLAIM_TIMEOUT))).rowcount
     db.commit()
-    row = db.execute("SELECT * FROM worker_jobs WHERE reader_id=? AND local_date=?",
-                     (reader_id, local_date)).fetchone()
-    return bool(row and row["status"] == "claimed" and row["claimed_at"] == stamp and row["attempts"] <= MAX_ATTEMPTS)
+    return bool(claimed)
 
 
 def run_once(db, now=None, ingest_fn=None, generate_fn=generate_edition):
@@ -102,9 +100,10 @@ def run_once(db, now=None, ingest_fn=None, generate_fn=generate_edition):
                        (item["reader_id"], item["local_date"]))
             db.commit()
             edition = generate_fn(db, item["reader_id"], item["prefs"], now=now)
-            db.execute("""UPDATE worker_jobs SET status='succeeded', completed_at=?, last_error=?
+            job_status = "failed" if edition["status"] in ("empty", "failed") else "succeeded"
+            db.execute("""UPDATE worker_jobs SET status=?, completed_at=?, last_error=?
                 WHERE reader_id=? AND local_date=?""",
-                (_utc(now), content_error, item["reader_id"], item["local_date"]))
+                (job_status, _utc(now), content_error, item["reader_id"], item["local_date"]))
             db.commit()
             results.append({"reader_id": item["reader_id"], "status": edition["status"], "edition_id": edition["id"]})
         except Exception as exc:

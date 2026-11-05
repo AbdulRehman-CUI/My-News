@@ -113,7 +113,8 @@ class ScreenTests(unittest.TestCase):
                     self.assertIn("csrf_token", form["fields"])
         discover = Markup(self.client.get("/discover").get_data(as_text=True))
         feedback = next(form for form in discover.forms if form["action"] == "/discover/feedback")
-        self.assertEqual(feedback["fields"]["event_type"], ["more", "less", "save"])
+        self.assertEqual(feedback["fields"]["event_type"][:2], ["more", "less"])
+        self.assertIn(feedback["fields"]["event_type"][2], ("save", "unsave"))
         self.assertIn("recommendation_id", feedback["fields"])
         self.assertIn("event_id", feedback["fields"])
         library = self.client.get("/library?q=Stored").get_data(as_text=True)
@@ -148,7 +149,48 @@ class ScreenTests(unittest.TestCase):
         refreshed = edition_items(self.db, self.edition["id"], 1)[0]
         self.assertEqual((refreshed["saved"], refreshed["completed"]), (1, 1))
         self.assertEqual(self.db.execute("SELECT COUNT(*) FROM feedback_events WHERE event_id='screen-more'").fetchone()[0], 1)
+        # Native forms omit event_id so each choice, including reversals, is recorded.
+        for event_type in ("more", "less"):
+            self.assertEqual(self.client.post("/paper/feedback", data={**common, "recommendation_id": item["recommendation_id"], "event_type": event_type}).status_code, 302)
+        self.assertEqual(self.db.execute("SELECT event_type FROM feedback_events ORDER BY rowid DESC LIMIT 1").fetchone()[0], "less")
         self.assertEqual(self.client.post("/paper/save", data={"saved":"1"}).status_code, 400)
+
+    def test_discover_save_round_trip_and_ownership(self):
+        markup = Markup(self.client.get("/discover").get_data(as_text=True))
+        feedback = next(form for form in markup.forms if form["action"] == "/discover/feedback")
+        recommendation_id = feedback["fields"]["recommendation_id"][0]
+        article_id = self.db.execute("SELECT article_id FROM recommendations WHERE id=?", (recommendation_id,)).fetchone()[0]
+        payload = {"csrf_token": "screen-token", "recommendation_id": recommendation_id,
+                   "event_id": "discover-save", "event_type": "save"}
+        self.assertEqual(self.client.post("/discover/feedback", data=payload).status_code, 302)
+        self.assertIsNotNone(self.db.execute("SELECT 1 FROM saved_stories WHERE article_id=? AND reader_id=1", (article_id,)).fetchone())
+        self.assertIn('value="unsave" aria-pressed="true"', self.client.get("/discover").get_data(as_text=True))
+        self.assertEqual(article_id, self.db.execute("SELECT article_id FROM saved_stories").fetchone()[0])
+        self.assertIn("Stored headline", self.client.get("/library").get_data(as_text=True))
+        self.assertEqual(self.client.post("/discover/feedback", data={**payload, "event_id": "discover-unsave", "event_type": "unsave"}).status_code, 302)
+        self.assertIsNone(self.db.execute("SELECT 1 FROM saved_stories WHERE article_id=?", (article_id,)).fetchone())
+        # Replaying a previously applied Save must not reverse the later Unsave.
+        self.assertEqual(self.client.post("/discover/feedback", data=payload).status_code, 302)
+        self.assertIsNone(self.db.execute("SELECT 1 FROM saved_stories WHERE article_id=?", (article_id,)).fetchone())
+        self.assertEqual(self.client.post("/discover/feedback", data={**payload, "recommendation_id": "another-reader"}).status_code, 400)
+
+    def test_web_motion_hooks_are_separate_from_daily_reading_and_pdf(self):
+        home = self.client.get("/").get_data(as_text=True)
+        daily = self.paper()
+        self.assertIn('class="lead-art" aria-hidden="true"', home)
+        self.assertNotIn('class="lead-art"', daily)
+        self.assertNotIn('data-reveal', daily)
+        self.assertIn('class="nav-label"', daily)
+        self.assertIn('aria-current="page"', daily)
+        self.assertIn('masthead.js', daily)
+        self.assertIn('class="action-status" role="status"', daily)
+        self.assertIn('Begin reading', daily)
+        self.assertIn('id="archive-title"', self.client.get('/library').get_data(as_text=True))
+        with self.app.test_request_context('/'):
+            from flask import render_template
+            pdf_html = render_template('newspaper.html', edition=self.edition, items=edition_items(self.db, self.edition['id'], 1))
+        for hook in ('screen.js', 'masthead.js', 'style.css', 'data-reveal', 'lead-art', 'site-header'):
+            self.assertNotIn(hook, pdf_html)
 
 
 if __name__ == "__main__":
