@@ -5,6 +5,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#f7f3ea">
+  <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}">
+  <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='favicon-32x32.png') }}">
+  <link rel="icon" type="image/png" sizes="16x16" href="{{ url_for('static', filename='favicon-16x16.png') }}">
+  <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='apple-touch-icon.png') }}">
   <title>{% block title %}MyNews{% endblock %} · A morning of your own</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   {% if reader or request.endpoint == 'profiles' %}<script src="{{ url_for('static', filename='masthead.js') }}"></script>{% endif %}
@@ -15,7 +19,7 @@
 <a class="skip-link" href="#main">Skip to content</a>
 <header class="site-header">
   <div class="header-inner">
-    <a class="brand" href="{{ url_for('paper') }}" aria-label="MyNews home"><span class="masthead-mask"><span class="masthead-word">MyNews<span class="brand-dot">.</span></span></span></a>
+    <a class="brand" href="{{ url_for('paper') }}" aria-label="MyNews home"><span class="brand-logo" aria-hidden="true" style="background-image: url('{{ url_for('static', filename='site-logo.png') }}')"></span><span class="masthead-mask"><span class="masthead-word">MyNews<span class="brand-dot">.</span></span></span></a>
     <nav class="main-nav" aria-label="Main navigation">
       {% for endpoint, label in [('paper', 'Today’s Paper'), ('discover', 'Discover'), ('library', 'My Library'), ('editor', 'My Editor')] %}
       <a href="{{ url_for(endpoint) }}" {% if request.endpoint == endpoint or (endpoint == 'paper' and request.endpoint == 'view_edition') %}aria-current="page"{% endif %}>{{ icon(endpoint) }}<span class="nav-label">{{ label }}</span></a>
