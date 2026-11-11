@@ -7,3 +7,8 @@ instance/
 tests/
 __pycache__/
 *.pyc
+*.mp4
+MyNews_Architecture.png
+width_550.webp
+BUILD_PROGRESS.md
+MYNEWS_PROJECT_REFERENCE.md
